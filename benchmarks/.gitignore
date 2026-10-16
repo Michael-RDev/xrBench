@@ -1,0 +1,8 @@
+.state/
+.build/
+.gradle/
+**/build/
+__pycache__/
+.pytest_cache/
+.env
+.export.log

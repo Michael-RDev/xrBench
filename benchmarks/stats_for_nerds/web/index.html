@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Benchmark every vision and transformer layer on your XR headset. Native Vulkan execution, per-layer evidence, local results.">
+  <title>xrBench — XR layer benchmarks</title>
+  <link rel="stylesheet" href="/stats/style.css"><script type="module" src="/stats/app.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header>
+  <a class="brand" href="#benchmark" aria-label="xrBench benchmark home">xrBench<span> / stats for nerds</span></a>
+  <nav aria-label="Main navigation"><a id="bench-link" href="/">3D benchmark ↗</a><a href="#benchmark" aria-current="page">Benchmark</a><a href="#layers">Layers</a><a href="#runs">Runs</a></nav>
+  <span class="local-label"><span class="dot"></span> Local workspace</span>
+</header>
+<main id="main" tabindex="-1">
+  <div id="notice" class="notice" role="status" hidden></div>
+  <section id="benchmark-view" class="view" aria-labelledby="benchmark-heading">
+    <div class="intro">
+      <p class="eyebrow">A foundation for crowdsourced XR kernels</p>
+      <h1 id="benchmark-heading">Better kernels start<br>with knowing each layer.</h1>
+      <p class="lede">Run vision and transformer layers on your headset’s GPU.<br class="desktop-break"> See what works, what fails, and where time is spent.</p>
+      <p class="intro-note">Native ExecuTorch + Vulkan. Every layer, one run.</p>
+    </div>
+    <div class="workflow" aria-label="Benchmark workflow"><span><b>01</b> Connect your headset</span><span><b>02</b> Run all tests</span><span><b>03</b> Inspect each layer</span></div>
+    <div class="workspace">
+      <section class="controls" aria-labelledby="headset-heading">
+        <p class="eyebrow">Your device</p><h2 id="headset-heading">Connect. Then benchmark.</h2>
+        <div id="device-identity" class="device-identity">Detecting headsets…</div>
+        <div id="device-picker" hidden><label for="device">Choose a headset</label><select id="device"></select></div>
+        <p id="device-help" class="hint">Connect by USB and approve USB debugging inside the headset.</p>
+        <div class="run-action"><button id="run" class="primary" disabled>Run all tests <span aria-hidden="true">↗</span></button><span id="suite-summary">25 layer types · 63 tests</span></div>
+        <p id="preset-help" class="hint">5 warmups · 20 samples for every case.</p>
+        <details class="advanced"><summary>Advanced <span class="hint">Mode &amp; preset</span></summary>
+          <div class="fields"><div><label for="mode">Measurement</label><select id="mode"><option value="isolated">Native layers in isolation</option><option value="xr">XR frame impact</option></select></div>
+          <div><label for="preset">Preset</label><select id="preset"><option value="smoke">Smoke · 5 / 20</option><option value="standard">Standard · 20 / 100</option><option value="sustained">Sustained · 10 min native</option></select></div></div>
+          <p class="hint">Every mode and preset includes the complete catalog.</p>
+        </details>
+        <details class="setup"><summary>First-time headset setup</summary><ol><li>Enable developer mode and USB debugging.</li><li>Connect a data-capable USB cable and approve the prompt in the headset.</li><li>Press Run all tests. The controller installs the matching APK and runs the full suite.</li><li>For optional XR impact, wear the headset and keep the 72 Hz scene focused.</li></ol></details>
+      </section>
+      <section class="execution" aria-labelledby="run-title">
+        <div class="title-row"><p class="eyebrow">Live session</p><span id="status-badge" class="badge">Idle</span></div>
+        <h2 id="run-title">Ready when you are.</h2><p id="progress-message" class="progress-message" aria-live="polite">Your results will appear as each test finishes.</p>
+        <progress id="progress-bar" max="63" value="0" aria-label="Completed tests"></progress>
+        <p id="case-progress" class="hint">0 of 63 tests finished</p>
+        <div class="metrics" aria-label="Case outcomes"><div><strong id="passed">—</strong><span>Passed</span></div><div><strong id="failed">—</strong><span>Failed</span></div><div><strong id="skipped">—</strong><span>Unsupported</span></div><div><strong id="interrupted">—</strong><span>Interrupted</span></div></div>
+        <dl class="details"><dt>Execution</dt><dd>Headset · native Vulkan · FP32 · stock</dd><dt>Database</dt><dd id="database">Connecting…</dd><dt>Report</dt><dd id="storage">No report yet</dd></dl>
+        <div class="buttons"><button id="stop" disabled>Stop</button><button id="download" disabled>Download JSON <span aria-hidden="true">↓</span></button><button id="retry" hidden>Retry save</button></div>
+        <p class="hint">Stop takes effect between work units. Reports remain on the headset if USB disconnects.</p>
+      </section>
+    </div>
+    <section class="live-results section-rule" aria-labelledby="latest-heading"><div class="title-row"><div><p class="eyebrow">As the suite runs</p><h2 id="latest-heading">Layer by layer.</h2></div><a class="text-link" href="#layers">Inspect all layers <span aria-hidden="true">↗</span></a></div><div id="latest-results" class="latest-results"><p class="empty">No measurements yet. Connect a headset to begin.</p></div></section>
+    <aside class="local-note"><strong>A local baseline for a shared effort.</strong><p>We’re building toward crowdsourced XR kernel benchmarks. Today, hardware details, correctness checks, and timings stay on this computer. No account, shared collector, or remote upload.</p></aside>
+  </section>
+  <section id="layers-view" class="view" aria-labelledby="layers-heading" hidden>
+    <div class="page-heading"><p class="eyebrow">Inspect the evidence</p><h1 id="layers-heading">Every layer has a story.</h1><p class="lede">Explore shapes, correctness, and native timings.<br>Start with the observations before drawing conclusions.</p></div>
+    <div class="report-context"><span id="layer-run">Catalog preview · no run selected</span><a href="#runs" class="text-link">Choose a saved run ↗</a></div>
+    <div class="filter-bar"><div class="search-field"><label for="layer-search">Find a layer or case</label><input id="layer-search" type="search" placeholder="Search layers, cases, or shapes…"></div><div><label for="layer-filter">Show</label><select id="layer-filter"><option value="all">All cases</option><option value="attention">Needs attention</option><option value="passed">Passed</option><option value="failed">Failed</option><option value="skipped">Unsupported</option><option value="interrupted">Interrupted</option><option value="running">Running</option><option value="pending">Not measured</option></select></div><span id="visible-count" class="hint"></span></div>
+    <p class="hint">Filters only change this view. Run all tests always executes the complete catalog.</p>
+    <div id="layer-groups"></div>
+    <aside class="measurement-note"><strong>Read timings in context.</strong><p>Total execution includes JNI staging, native forward, and output copy. Native forward includes delegate staging. GPU timing is the sum of operation timestamp intervals, not critical-path latency. These scopes overlap; do not add them. Unavailable counters cannot establish whether a layer is memory- or compute-bound.</p></aside>
+  </section>
+  <section id="runs-view" class="view" aria-labelledby="runs-heading" hidden>
+    <div class="page-heading"><p class="eyebrow">Local benchmark history</p><h1 id="runs-heading">Measure. Compare. Learn.</h1><p class="lede">Revisit the evidence and compare compatible runs.<br>Every report keeps its device and build context.</p></div>
+    <div class="title-row"><h2>Saved &amp; active runs</h2><button id="refresh-history">Refresh history</button></div><p id="history-notice" class="hint" role="status"></p>
+    <div id="history"></div><button id="more-history" hidden>Load more runs</button>
+    <section id="comparison-section" class="section-rule" aria-labelledby="comparison-heading"><p class="eyebrow">Two runs, the same workload</p><h2 id="comparison-heading">Compare the measurements.</h2><div class="comparison-controls"><div><label for="baseline-run">Baseline run</label><select id="baseline-run"><option value="">Choose a run</option></select></div><div><label for="comparison-run">Comparison run</label><select id="comparison-run"><option value="">Choose a run</option></select></div><button id="compare" disabled>Compare runs ↗</button></div><p class="hint">An APK hash identifies the deployed build, not a selected custom kernel. Matching hardware metadata does not identify the same physical headset.</p><div id="comparison" aria-live="polite"><p class="empty">Choose two finished runs to see their compatibility and observed timing changes.</p></div></section>
+  </section>
+</main>
+<footer><span>xrBench <span class="muted">/ native layer benchmarks</span></span><span>Built for understanding XR compute.</span></footer>
+</body></html>

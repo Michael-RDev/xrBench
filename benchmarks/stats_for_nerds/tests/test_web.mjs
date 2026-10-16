@@ -1,0 +1,12 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {casesForReport,caseState,caseCounts,filterCases,needsAttention,timings} from '../web/view-model.mjs';
+const catalog=JSON.parse(readFileSync(new URL('../../layers/catalog.json',import.meta.url))).cases;
+const base={id:'linear_odd',operation:'linear',rows:[]};
+test('catalog preview includes every case and operation',()=>{const c=casesForReport(catalog,null,'current');assert.equal(c.length,63);assert.equal(new Set(c.map(c=>c.operation)).size,25);assert.equal(caseCounts(c,null).pending,63);});
+test('outcomes distinguish unsupported, failed, interrupted and active evidence',()=>{for(const status of ['passed','failed','skipped','interrupted']){const c={...base,rows:[{status}]};assert.equal(caseState(c,{status:'complete'}),status);assert.equal(needsAttention(c,{status:'complete'}),status!=='passed');}assert.equal(caseState({...base,rows:[{status:'interrupted'}]},{status:'running'}),'running');assert.equal(caseState({...base,rows:[{status:'passed'}]},{status:'running',progress:{current_case:'linear_odd'}}),'running');});
+test('filtering never changes the execution catalog and flags invalid timings',()=>{const c=[{...base,rows:[{status:'passed',thermal_discontinuity:true}]},{id:'relu',operation:'relu',rows:[]}];assert.equal(filterCases(c,{status:'complete'},'','attention').length,1);assert.equal(c.length,2);assert.equal(filterCases(c,null,'relu','all').length,1);});
+test('historical reports use recorded shapes, not today’s catalog',()=>{const report={suite_revision:'old',configuration:{cases:[catalog[0].id,'removed_case']},results:[{case:catalog[0].id,operation:'linear',inputs:[{shape:[3],dtype:'float32'}]}]};const rows=casesForReport(catalog,report,'new');assert.deepEqual(rows[0].inputs,[{shape:[3],dtype:'float32'}]);assert.equal(rows[1].operation,'Unrecorded operation');assert.equal(rows.length,2);});
+test('unavailable timing stays unavailable; valid samples retain median and p95',()=>{assert.equal(timings({samples:[{gpu_ms:1},{}]},'gpu_ms'),null);const t=timings({samples:[{execution_ms:1},{execution_ms:3}]},'execution_ms');assert.equal(t.median,2);assert.equal(t.p95,2.9);});
+test('XR windows count as one case and correctness failure outranks timing',()=>{const c={...base,rows:[{status:'passed'},{status:'passed',correctness_after:{passed:false}}]};assert.equal(caseCounts([c],{status:'complete'}).failed,1);});

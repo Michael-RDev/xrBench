@@ -1,0 +1,23 @@
+[project]
+name = "xrbench"
+version = "0.1.0"
+description = "Native XR layer benchmarks with two local web interfaces"
+requires-python = ">=3.11,<3.14"
+dependencies = ["numpy>=2.0,<3", "pyyaml>=6,<7", "psycopg[binary]>=3.2,<4"]
+
+[project.optional-dependencies]
+export = ["executorch==1.4.1"]
+
+[dependency-groups]
+dev = ["pytest>=8,<9", "ruff>=0.12,<1", "cmake>=3.31,<4", "ninja>=1.12,<2"]
+
+[tool.pytest.ini_options]
+testpaths = ["benchmarks/layers/engine/tests", "benchmarks/stats_for_nerds/tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+exclude = ["artifacts"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

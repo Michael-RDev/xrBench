@@ -1,0 +1,5 @@
+{
+  "executorch": {"url": "https://github.com/pytorch/executorch.git", "ref": "v1.4.1", "commit": "e4d02f41f7909e8ed5bf4a14ffc520d733453d9f"},
+  "openxr": {"url": "https://github.com/KhronosGroup/OpenXR-SDK.git", "ref": "release-1.1.49", "commit": "977f6675bc0057d5a54ed290cb5c71c699b1c0ab"},
+  "android": {"compile_sdk": 35, "min_sdk": 29, "ndk": "28.2.13676358", "agp": "8.9.2", "gradle": "8.11.1"}
+}

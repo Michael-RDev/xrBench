@@ -1,0 +1,1240 @@
+{
+  "seed": 20261015,
+  "atol": 0.0001,
+  "rtol": 0.0001,
+  "cases": [
+    {
+      "id": "linear_up_1",
+      "operation": "linear",
+      "kind": "typical",
+      "params": {
+        "out_features": 1536
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            1,
+            384
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "linear_down_1",
+      "operation": "linear",
+      "kind": "typical",
+      "params": {
+        "out_features": 384
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            1,
+            1536
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "linear_up_32",
+      "operation": "linear",
+      "kind": "typical",
+      "params": {
+        "out_features": 1536
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            32,
+            384
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "linear_down_32",
+      "operation": "linear",
+      "kind": "typical",
+      "params": {
+        "out_features": 384
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            32,
+            1536
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "linear_up_128",
+      "operation": "linear",
+      "kind": "typical",
+      "params": {
+        "out_features": 1536
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            128,
+            384
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "linear_down_128",
+      "operation": "linear",
+      "kind": "typical",
+      "params": {
+        "out_features": 384
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            128,
+            1536
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "linear_up_256",
+      "operation": "linear",
+      "kind": "typical",
+      "params": {
+        "out_features": 1536
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            256,
+            384
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "linear_down_256",
+      "operation": "linear",
+      "kind": "typical",
+      "params": {
+        "out_features": 384
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            256,
+            1536
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "linear_odd",
+      "operation": "linear",
+      "kind": "edge",
+      "params": {
+        "out_features": 17
+      },
+      "inputs": [
+        {
+          "shape": [
+            2,
+            7,
+            13
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "linear_no_bias",
+      "operation": "linear",
+      "kind": "edge",
+      "params": {
+        "out_features": 65,
+        "bias": false
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            31,
+            63
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "matmul_rectangular",
+      "operation": "matmul",
+      "kind": "typical",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            64,
+            128
+          ],
+          "dtype": "float32"
+        },
+        {
+          "shape": [
+            128,
+            96
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "matmul_odd",
+      "operation": "matmul",
+      "kind": "edge",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            7,
+            13
+          ],
+          "dtype": "float32"
+        },
+        {
+          "shape": [
+            13,
+            17
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "bmm_heads",
+      "operation": "bmm",
+      "kind": "typical",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            6,
+            32,
+            64
+          ],
+          "dtype": "float32"
+        },
+        {
+          "shape": [
+            6,
+            64,
+            32
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "bmm_odd",
+      "operation": "bmm",
+      "kind": "edge",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            3,
+            7,
+            13
+          ],
+          "dtype": "float32"
+        },
+        {
+          "shape": [
+            3,
+            13,
+            17
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "relu_tokens",
+      "operation": "relu",
+      "kind": "typical",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            1,
+            128,
+            384
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "relu_odd",
+      "operation": "relu",
+      "kind": "edge",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            2,
+            7,
+            13
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "gelu_tokens",
+      "operation": "gelu",
+      "kind": "typical",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            1,
+            128,
+            384
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "gelu_odd",
+      "operation": "gelu",
+      "kind": "edge",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            2,
+            7,
+            13
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "silu_tokens",
+      "operation": "silu",
+      "kind": "typical",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            1,
+            128,
+            384
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "silu_odd",
+      "operation": "silu",
+      "kind": "edge",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            2,
+            7,
+            13
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "sigmoid_tokens",
+      "operation": "sigmoid",
+      "kind": "typical",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            1,
+            128,
+            384
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "sigmoid_odd",
+      "operation": "sigmoid",
+      "kind": "edge",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            2,
+            7,
+            13
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "tanh_tokens",
+      "operation": "tanh",
+      "kind": "typical",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            1,
+            128,
+            384
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "tanh_odd",
+      "operation": "tanh",
+      "kind": "edge",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            2,
+            7,
+            13
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "layer_norm_tokens",
+      "operation": "layer_norm",
+      "kind": "typical",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            1,
+            128,
+            384
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "layer_norm_odd",
+      "operation": "layer_norm",
+      "kind": "edge",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            2,
+            7,
+            13
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "rms_norm_tokens",
+      "operation": "rms_norm",
+      "kind": "typical",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            1,
+            128,
+            384
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "rms_norm_odd",
+      "operation": "rms_norm",
+      "kind": "edge",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            2,
+            7,
+            13
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "softmax_tokens",
+      "operation": "softmax",
+      "kind": "typical",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            1,
+            128,
+            384
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "softmax_odd",
+      "operation": "softmax",
+      "kind": "edge",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            2,
+            7,
+            13
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "sum_tokens",
+      "operation": "sum",
+      "kind": "typical",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            1,
+            128,
+            384
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "sum_odd",
+      "operation": "sum",
+      "kind": "edge",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            2,
+            7,
+            13
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "mean_tokens",
+      "operation": "mean",
+      "kind": "typical",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            1,
+            128,
+            384
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "mean_odd",
+      "operation": "mean",
+      "kind": "edge",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            2,
+            7,
+            13
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "layer_norm_constant",
+      "operation": "layer_norm",
+      "kind": "edge",
+      "params": {
+        "pattern": "constant"
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            7,
+            13
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "rms_norm_constant",
+      "operation": "rms_norm",
+      "kind": "edge",
+      "params": {
+        "pattern": "constant"
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            7,
+            13
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "softmax_large",
+      "operation": "softmax",
+      "kind": "edge",
+      "params": {
+        "pattern": "large"
+      },
+      "inputs": [
+        {
+          "shape": [
+            2,
+            7,
+            13
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "attention_short",
+      "operation": "attention",
+      "kind": "typical",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            1,
+            6,
+            32,
+            64
+          ],
+          "dtype": "float32"
+        },
+        {
+          "shape": [
+            1,
+            6,
+            32,
+            64
+          ],
+          "dtype": "float32"
+        },
+        {
+          "shape": [
+            1,
+            6,
+            32,
+            64
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "attention_masked",
+      "operation": "attention",
+      "kind": "typical",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            1,
+            6,
+            128,
+            64
+          ],
+          "dtype": "float32"
+        },
+        {
+          "shape": [
+            1,
+            6,
+            128,
+            64
+          ],
+          "dtype": "float32"
+        },
+        {
+          "shape": [
+            1,
+            6,
+            128,
+            64
+          ],
+          "dtype": "float32"
+        },
+        {
+          "shape": [
+            1,
+            1,
+            1,
+            128
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "attention_odd",
+      "operation": "attention",
+      "kind": "edge",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            2,
+            3,
+            7,
+            13
+          ],
+          "dtype": "float32"
+        },
+        {
+          "shape": [
+            2,
+            3,
+            11,
+            13
+          ],
+          "dtype": "float32"
+        },
+        {
+          "shape": [
+            2,
+            3,
+            11,
+            17
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "add_residual",
+      "operation": "add",
+      "kind": "typical",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            1,
+            128,
+            384
+          ],
+          "dtype": "float32"
+        },
+        {
+          "shape": [
+            1,
+            128,
+            384
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "add_broadcast",
+      "operation": "add",
+      "kind": "edge",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            2,
+            7,
+            13
+          ],
+          "dtype": "float32"
+        },
+        {
+          "shape": [
+            13
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "mul_residual",
+      "operation": "mul",
+      "kind": "typical",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            1,
+            128,
+            384
+          ],
+          "dtype": "float32"
+        },
+        {
+          "shape": [
+            1,
+            128,
+            384
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "mul_broadcast",
+      "operation": "mul",
+      "kind": "edge",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            2,
+            7,
+            13
+          ],
+          "dtype": "float32"
+        },
+        {
+          "shape": [
+            13
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "conv2d_3x3",
+      "operation": "conv2d",
+      "kind": "typical",
+      "params": {
+        "out_channels": 32,
+        "kernel": 3,
+        "padding": 1
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            16,
+            32,
+            32
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "conv2d_pointwise",
+      "operation": "conv2d",
+      "kind": "typical",
+      "params": {
+        "out_channels": 64,
+        "kernel": 1
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            32,
+            16,
+            16
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "conv2d_stride_odd",
+      "operation": "conv2d",
+      "kind": "edge",
+      "params": {
+        "out_channels": 7,
+        "kernel": 3,
+        "padding": 1,
+        "stride": 2
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            3,
+            31,
+            29
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "conv2d_grouped",
+      "operation": "conv2d",
+      "kind": "edge",
+      "params": {
+        "out_channels": 12,
+        "kernel": 3,
+        "padding": 1,
+        "groups": 4
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            8,
+            15,
+            17
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "depthwise_3x3",
+      "operation": "depthwise_conv2d",
+      "kind": "typical",
+      "params": {
+        "out_channels": 32,
+        "kernel": 3,
+        "padding": 1
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            32,
+            32,
+            32
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "depthwise_odd",
+      "operation": "depthwise_conv2d",
+      "kind": "edge",
+      "params": {
+        "out_channels": 7,
+        "kernel": 3,
+        "padding": 1,
+        "stride": 2
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            7,
+            15,
+            17
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "batch_norm_image",
+      "operation": "batch_norm",
+      "kind": "typical",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            1,
+            32,
+            32,
+            32
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "batch_norm_odd",
+      "operation": "batch_norm",
+      "kind": "edge",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            2,
+            7,
+            15,
+            17
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "max_pool2d_image",
+      "operation": "max_pool2d",
+      "kind": "typical",
+      "params": {
+        "kernel": 2,
+        "stride": 2
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            32,
+            32,
+            32
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "max_pool2d_odd",
+      "operation": "max_pool2d",
+      "kind": "edge",
+      "params": {
+        "kernel": 3,
+        "stride": 2
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            7,
+            15,
+            17
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "avg_pool2d_image",
+      "operation": "avg_pool2d",
+      "kind": "typical",
+      "params": {
+        "kernel": 2,
+        "stride": 2
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            32,
+            32,
+            32
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "avg_pool2d_odd",
+      "operation": "avg_pool2d",
+      "kind": "edge",
+      "params": {
+        "kernel": 3,
+        "stride": 2
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            7,
+            15,
+            17
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "global_avg_pool",
+      "operation": "adaptive_avg_pool2d",
+      "kind": "typical",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            1,
+            32,
+            15,
+            17
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "embedding_tokens",
+      "operation": "embedding",
+      "kind": "typical",
+      "params": {
+        "vocab_size": 1024,
+        "embedding_dim": 384
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            128
+          ],
+          "dtype": "int64"
+        }
+      ]
+    },
+    {
+      "id": "embedding_odd",
+      "operation": "embedding",
+      "kind": "edge",
+      "params": {
+        "vocab_size": 31,
+        "embedding_dim": 13
+      },
+      "inputs": [
+        {
+          "shape": [
+            2,
+            7
+          ],
+          "dtype": "int64"
+        }
+      ]
+    },
+    {
+      "id": "transpose_heads",
+      "operation": "transpose_copy",
+      "kind": "typical",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            1,
+            6,
+            32,
+            64
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "transpose_odd",
+      "operation": "transpose_copy",
+      "kind": "edge",
+      "params": {},
+      "inputs": [
+        {
+          "shape": [
+            2,
+            7,
+            13
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "concat_channels",
+      "operation": "concat",
+      "kind": "typical",
+      "params": {
+        "dim": -1
+      },
+      "inputs": [
+        {
+          "shape": [
+            1,
+            32,
+            64
+          ],
+          "dtype": "float32"
+        },
+        {
+          "shape": [
+            1,
+            32,
+            64
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    {
+      "id": "concat_odd",
+      "operation": "concat",
+      "kind": "edge",
+      "params": {
+        "dim": -1
+      },
+      "inputs": [
+        {
+          "shape": [
+            2,
+            7,
+            13
+          ],
+          "dtype": "float32"
+        },
+        {
+          "shape": [
+            2,
+            7,
+            17
+          ],
+          "dtype": "float32"
+        }
+      ]
+    }
+  ]
+}

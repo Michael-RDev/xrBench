@@ -1,0 +1,16 @@
+{
+  "name": "xrbench-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild benchmarks/bench_web/src/scene.js --bundle --format=esm --minify --legal-comments=linked --outfile=benchmarks/bench_web/web/scene.bundle.js",
+    "test": "node --experimental-vm-modules --test benchmarks/stats_for_nerds/tests/test_web.mjs benchmarks/bench_web/tests/*.mjs"
+  },
+  "dependencies": {
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "jsdom": "30.1.3"
+  }
+}
