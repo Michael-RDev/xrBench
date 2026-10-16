@@ -14,6 +14,6 @@ local.properties
 hs_err_pid*.log
 
 node_modules/
-benchmarks/bench_web/web/scene.bundle.js*
+app/bench_web/web/scene.bundle.js*
 .env
 *.log

@@ -12,7 +12,7 @@ export = ["executorch==1.4.1"]
 dev = ["pytest>=8,<9", "ruff>=0.12,<1", "cmake>=3.31,<4", "ninja>=1.12,<2"]
 
 [tool.pytest.ini_options]
-testpaths = ["benchmarks/layers/engine/tests", "benchmarks/stats_for_nerds/tests"]
+testpaths = ["layers/engine/tests", "app/stats_for_nerds/tests"]
 pythonpath = ["."]
 
 [tool.ruff]

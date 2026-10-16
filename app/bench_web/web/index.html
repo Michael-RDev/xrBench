@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Understand every layer on your XR headset. One click, 63 native benchmarks, local results.">
+  <title>xrBench — Know your headset.</title>
+  <link rel="stylesheet" href="/bench/style.css"><script type="module" src="/bench/app.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to benchmark</a>
+<header class="shell"><a class="brand" href="/" aria-label="xrBench home">xr<span>Bench</span><span class="brand-dot" aria-hidden="true"></span></a><nav aria-label="Main navigation"><a id="stats-link" href="/stats/">Stats for Nerds <span aria-hidden="true">↗</span></a></nav></header>
+<main id="main" class="shell" tabindex="-1">
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="hero-copy">
+      <p class="eyebrow">Built for what comes next.</p><h1 id="hero-title">Know your<br>headset.<br><span>Layer by layer.</span></h1><p class="lede">Better XR starts with better kernels.<br>Find out how your headset handles the building blocks of vision and AI.</p>
+      <div class="hero-actions">
+        <button id="run" class="primary" aria-label="Run all tests" disabled><span id="run-label">Run</span><span aria-hidden="true">↗</span></button>
+        <p id="run-status" class="run-status" role="status" hidden></p>
+        <div id="notice" class="notice" role="status" hidden><span id="notice-message"></span> <a id="help-link" href="/stats/">Open Stats for Nerds ↗</a></div>
+      </div>
+    </div>
+    <figure class="device-stage" aria-label="Connected headset preview">
+      <div id="device-status" class="device-status" role="status" aria-live="polite">
+        <p id="device-name">Looking for your headset</p>
+        <p id="device-help">Checking the local benchmark service…</p>
+        <a id="device-help-link" href="/stats/" hidden>Open Stats for Nerds ↗</a>
+      </div>
+      <div id="scene" hidden>
+        <div id="scene-fallback" role="status"><p>3D preview unavailable.<br><span>Your headset and benchmark controls are still available.</span></p></div>
+      </div>
+      <div id="viewer-controls" class="viewer-controls" hidden>
+        <p id="viewer-hint">Drag to rotate · Scroll or pinch to zoom<span class="sr-only">. Use arrow keys to rotate, plus and minus to zoom, and Home to reset.</span></p>
+        <button id="reset-view" type="button">Reset view</button>
+      </div>
+    </figure>
+  </section>
+</main>
+
+</body></html>
