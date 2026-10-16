@@ -25,6 +25,7 @@ def test_session_origin_host_and_path_boundaries():
             ("/bench/app.js", b"/shared/session.mjs"),
             ("/bench/style.css", b".device-stage"),
             ("/bench/device-view.mjs", b"deviceView"),
+            ("/bench/results-view.mjs", b"renderResults"),
             ("/stats/app.js", b"/shared/session.mjs"),
             ("/stats/style.css", b".compare-metadata"),
             ("/stats/view-model.mjs", b"casesForReport"),

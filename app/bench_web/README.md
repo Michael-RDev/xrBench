@@ -1,27 +1,43 @@
 # Bench Web
 
-The default website contains only the header and a locally bundled Three.js headset
-hero. The Run button beneath the hero description starts the full isolated smoke
+The default website contains a locally bundled Three.js headset hero and a live
+results section that appears after starting or selecting a run. The Run button
+beneath the hero description starts the full isolated smoke
 suite on the single connected, authorized headset, then becomes Stop while a run
 is active. Progress and setup messages appear below Run, hidden when idle;
-detailed settings, device selection, results, and downloads live in Stats for
-Nerds. Both views retain the selected run.
+the live results section groups all 63 cases into 25 layer types. Expand a layer
+to see input shapes, correctness status, sample count, median/p95 execution latency,
+and GPU timestamps when available. Failed, unsupported, interrupted, and invalid
+timings remain explicit; missing values never become zero. Detailed settings,
+device selection, comparisons, and downloads live in Stats for Nerds. Both views
+retain the selected run. Results and progress refresh once per second, including
+after reconnecting; polling never launches another benchmark.
 
 Browser graphics do not execute layer workloads. The Run control remains
 available without WebGL. Missing or multiple headsets receive setup guidance.
 
 The hero detects devices through the local ADB service (developer mode and USB
-debugging are required), polling every three seconds. It shows a connection prompt
+debugging are required). Host device discovery refreshes every three seconds. It shows a connection prompt
 until a device is identified. Quest 3 receives a locally built, procedural model;
 other models are identified without substituting an inaccurate Quest preview.
 Unauthorized Quest 3 devices can be previewed while awaiting the debugging prompt.
 Benchmark eligibility remains independent of preview availability.
 
 Drag to rotate, scroll or pinch to zoom, and use Reset view to return home. Focus
-the model to use arrow keys, +/−, and Home. Authorization plays a brief entrance
-followed by gentle idle motion; interaction pauses motion until reset. Reduced
-motion disables automatic animation. Hidden pages pause rendering, and unavailable
-WebGL falls back to text while leaving benchmark controls usable.
+the model to use arrow keys, +/−, and Home. The headset is built from ivory beveled
+blocks with graphite cushioning and three dark front sensor windows. Detection
+plays a 2.5-second assembly: blocks float along curved paths into the shell, sensors,
+and soft straps, then settle into gentle idle motion once authorized. The shared
+cube geometry is rendered in four instanced batches; no interior shell cubes are
+drawn.
+
+Assembly plays when a recognized Quest 3 first appears or reconnects, including
+while awaiting USB authorization. Polling and authorization changes do not replay
+it. Rotating or zooming continues assembly but pauses subsequent idle motion;
+Reset view completes assembly and restores the home camera without replaying it.
+Reduced motion shows the completed model immediately. Hidden pages and WebGL
+context loss pause animation time. Unavailable WebGL falls back to text while
+leaving benchmark controls usable.
 
 The original model in `src/quest3.js` uses the standard soft strap and exterior
 references from https://www.meta.com/quest/quest-3/. It is illustrative, not CAD

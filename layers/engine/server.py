@@ -77,7 +77,7 @@ def handler(controller, token):
                     result=controller.store.result(parts[3])
                     self.respond(200 if result else 404,result or dict(error="Committed report not found"));return
                 files={"/":BENCH/"index.html", "/stats/":STATS/"index.html", "/stats":STATS/"index.html"}
-                for name in ("app.js","style.css","device-view.mjs","scene.bundle.js","scene.bundle.js.LEGAL.txt"):
+                for name in ("app.js","style.css","device-view.mjs","results-view.mjs","scene.bundle.js","scene.bundle.js.LEGAL.txt"):
                     files["/bench/"+name]=BENCH/name
                 for name in ("app.js","style.css","view-model.mjs"):
                     files["/stats/"+name]=STATS/name

@@ -1,6 +1,7 @@
 import {selectedRunId,rememberRun,frontendLink} from '/shared/session.mjs';
 import {terminal,casesForReport,caseState,needsAttention} from '/stats/view-model.mjs';
 import {deviceView} from '/bench/device-view.mjs';
+import {renderResults} from '/bench/results-view.mjs';
 
 const $=id=>document.getElementById(id);
 let token='',status=null,selected=selectedRunId(),report=null,reportKey=null;
@@ -56,7 +57,7 @@ function updateScene(){
 
 function render(){
   rememberRun(selected);
-  for(const id of ['stats-link','help-link'])$(id).href=frontendLink('/stats/',selected);
+  for(const id of ['stats-link','help-link','results-link'])$(id).href=frontendLink('/stats/',selected);
   const running=active(),run=job() || report;
   const stopping=running?.cancel_requested;
   $('run-label').textContent=stopping?'Stopping…':busy?(running?'Stopping…':'Starting…'):running?'Stop':'Run';
@@ -65,11 +66,12 @@ function render(){
   $('run').setAttribute('aria-busy',String(busy||!!stopping));
   const progress=run
     ? terminal.has(run.status)
-      ? `Run ${run.status}. View results in Stats for Nerds.`
+      ? `Run ${run.status}. Results are below.`
       : run.message || `${run.progress?.completed_cases || 0} of ${run.progress?.total_cases || 63} tests finished.`
     : '';
   $('run-status').textContent=progress;
   $('run-status').hidden=!progress;
+  renderResults(document,status,job(),report);
   updateScene();
   notice(serviceError || actionError);
 }
@@ -163,7 +165,7 @@ import('/bench/scene.bundle.js').then(({createScene})=>{
 });
 
 await poll();
-const polling=setInterval(poll,3000);
+const polling=setInterval(poll,1000);
 window.addEventListener('pagehide',event=>{
   if(event.persisted)return;
   pageClosed=true;

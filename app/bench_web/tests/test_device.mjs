@@ -27,14 +27,17 @@ test('device state distinguishes connection, setup, ambiguity, and detection fai
   assert.equal(view([{...quest,supported:false}]).kind,'unsupported');
 });
 
-test('entrance plays on initial authorization and reconnection, not repeated polls or model-only previews',()=>{
+test('assembly plays on recognition and reconnection, not polling or authorization changes',()=>{
   const absent=view([]),connected=view([quest]),unauthorized=view([{...quest,state:'unauthorized'}]);
   assert.equal(deviceTransition(null,connected).enter,true);
-  assert.equal(deviceTransition(null,unauthorized).enter,false);
-  assert.equal(deviceTransition(unauthorized,connected).enter,true);
+  assert.equal(deviceTransition(null,unauthorized).enter,true);
+  assert.equal(deviceTransition(unauthorized,connected).enter,false);
+  assert.equal(deviceTransition(connected,unauthorized).enter,false);
   assert.equal(deviceTransition(connected,structuredClone(connected)).enter,false);
   assert.equal(deviceTransition(connected,structuredClone(connected)).identityChanged,false);
   assert.equal(deviceTransition(connected,absent).enter,false);
   assert.equal(deviceTransition(absent,connected).enter,true);
   assert.equal(deviceTransition(connected,view([{...quest,serial:'replacement'}])).enter,true);
+  assert.equal(deviceTransition(view([{...quest,state:'offline'}]),connected).enter,true);
+  assert.equal(deviceTransition(view([quest],'Service unavailable'),connected).enter,true);
 });

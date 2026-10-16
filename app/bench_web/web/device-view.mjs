@@ -31,9 +31,8 @@ export function deviceView(status,serviceError=''){
     label:'Meta Quest 3 · Connected',help:device.supported?'':device.reason || 'Benchmarking is unavailable for this device.'};
 }
 
-// Only a real identity/authorization transition may restart the entrance.
+// Assemble when an identified headset appears, including before USB authorization.
 export function deviceTransition(previous,next){
   const identityChanged=previous?.serial!==next.serial || previous?.modelKey!==next.modelKey;
-  return {identityChanged,enter:next.visible&&next.authorized&&
-    (identityChanged || !previous?.visible || !previous?.authorized)};
+  return {identityChanged,enter:next.visible&&(identityChanged || !previous?.visible)};
 }

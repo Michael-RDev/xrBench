@@ -14,7 +14,7 @@ export function createScene(container,{onAvailabilityChange=()=>{}}={}){
   scene.add(new THREE.HemisphereLight(0xffffff,0x92979c,2.1));
   const key=new THREE.DirectionalLight(0xfffaf4,3.2);key.position.set(-3,6,5);scene.add(key);
   const fill=new THREE.DirectionalLight(0xdfeaff,1.6);fill.position.set(4,2,-3);scene.add(fill);
-  const headset=createQuest3();scene.add(headset);
+  const model=createQuest3(),headset=model.group;scene.add(headset);
   const orbit=new THREE.Group(),nodes=[];orbit.position.z=-1.05;scene.add(orbit);
   const nodeGeometry=new THREE.SphereGeometry(.026,10,8);
   for(let i=0;i<25;i++){
@@ -27,7 +27,7 @@ export function createScene(container,{onAvailabilityChange=()=>{}}={}){
   orbit.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color:0xdde2d6,transparent:true,opacity:.65})));
   const canvas=renderer.domElement,fallback=container.querySelector('#scene-fallback');
   canvas.tabIndex=0;canvas.setAttribute('role','img');
-  canvas.setAttribute('aria-label','Interactive 3D model of Meta Quest 3');
+  canvas.setAttribute('aria-label','Interactive block-built 3D model of Meta Quest 3');
   canvas.setAttribute('aria-describedby','viewer-hint');
   container.append(canvas);fallback.hidden=true;
   const controls=new OrbitControls(camera,canvas);
@@ -36,7 +36,8 @@ export function createScene(container,{onAvailabilityChange=()=>{}}={}){
   controls.target.set(0,0,-1.05);
   controls.touches.TWO=THREE.TOUCH.DOLLY_ROTATE;
   const reduce=matchMedia('(prefers-reduced-motion: reduce)');
-  let raf=0,last=0,lost=false,disposed=false,current=null,userControlled=false,entrance=null;
+  let raf=0,last=0,frameTime=0,lost=false,disposed=false,current=null,userControlled=false;
+  let assembly=null,idleTime=0;
   let homeDistance=8.5;
   const homeDirection=new THREE.Vector3(3.8,2.1,7).normalize();
   function draw(){if(!disposed&&!lost&&!document.hidden&&current?.visible)renderer.render(scene,camera);}
@@ -55,38 +56,47 @@ export function createScene(container,{onAvailabilityChange=()=>{}}={}){
     if(!userControlled)home();
     draw();
   }
+  function animated(){
+    return !disposed&&!lost&&!document.hidden&&!reduce.matches&&current?.visible&&
+      (assembly!==null || current.authorized&&!userControlled);
+  }
+  function finishAssembly(){assembly=null;idleTime=0;model.setAssemblyProgress(1);}
   function tick(time){
     raf=0;
-    if(disposed||lost||document.hidden||reduce.matches||!current?.visible||!current.authorized||userControlled)return;
-    if(time-last>=1000/30){
-      if(entrance!==null){
-        const t=Math.min(1,(time-entrance)/1000),eased=1-(1-t)**3;
-        headset.rotation.y=-.38*(1-eased);
-        headset.position.y=-.16*(1-eased);
-        headset.scale.setScalar(.94+.06*eased);
-        if(t===1)entrance=null;
+    if(!animated())return;
+    frameTime+=Math.max(0,time-last);last=time;
+    if(frameTime>=1000/30){
+      if(assembly!==null){
+        assembly=Math.min(2500,assembly+frameTime);
+        const progress=assembly/2500;
+        model.setAssemblyProgress(progress);
+        // A small final lift settles to the same pose from which idle starts.
+        headset.position.y=.025*Math.sin(Math.PI*THREE.MathUtils.clamp((progress-.88)/.12,0,1));
+        if(assembly===2500){finishAssembly();pose();}
       }else{
-        headset.position.y=Math.sin(time*.0007)*.025;
-        headset.rotation.y=Math.sin(time*.00035)*.025;
+        idleTime+=frameTime;
+        headset.position.y=Math.sin(idleTime*.0007)*.025;
+        headset.rotation.y=Math.sin(idleTime*.00035)*.025;
       }
-      draw();last=time;
+      draw();frameTime=0;
     }
-    raf=requestAnimationFrame(tick);
+    if(animated())raf=requestAnimationFrame(tick);
   }
   function motion(){
-    cancelAnimationFrame(raf);raf=0;
-    if(reduce.matches){entrance=null;pose();}
-    if(!disposed&&!lost&&!document.hidden&&current?.visible&&current.authorized&&!userControlled&&!reduce.matches)raf=requestAnimationFrame(tick);
+    if(reduce.matches){finishAssembly();pose();}
+    if(animated()){
+      if(!raf){last=performance.now();frameTime=0;raf=requestAnimationFrame(tick);}
+    }else{cancelAnimationFrame(raf);raf=0;frameTime=0;}
     draw();
   }
   function interact(){
-    userControlled=true;entrance=null;
-    // Freeze at the current pose so grabbing a moving headset never snaps it.
-    cancelAnimationFrame(raf);raf=0;
+    userControlled=true;
+    // Assembly continues under the user's camera; only idle motion is paused.
+    motion();
   }
   function resetView(){
     if(!current?.visible||disposed)return;
-    userControlled=false;entrance=null;pose();home();motion();
+    userControlled=false;finishAssembly();pose();home();motion();
   }
   function keydown(event){
     if(!current?.visible||lost||event.altKey||event.ctrlKey||event.metaKey)return;
@@ -125,10 +135,12 @@ export function createScene(container,{onAvailabilityChange=()=>{}}={}){
       if(disposed)return;
       const transition=deviceTransition(current,view),wasVisible=!!current?.visible;
       current=view;headset.visible=orbit.visible=view.visible;controls.enabled=view.visible&&!lost;
-      if(transition.identityChanged || !wasVisible&&view.visible){userControlled=false;entrance=null;pose();home();}
-      if(transition.enter){userControlled=false;pose();entrance=reduce.matches?null:performance.now();}
-      if(!view.visible){entrance=null;pose();}
-      else if(!view.authorized){entrance=null;pose();}
+      if(transition.identityChanged || !wasVisible&&view.visible){userControlled=false;finishAssembly();pose();home();}
+      if(transition.enter){
+        userControlled=false;pose();idleTime=0;assembly=reduce.matches?null:0;
+        model.setAssemblyProgress(reduce.matches?1:0);
+      }
+      if(!view.visible){finishAssembly();pose();}
       if(view.visible&&!wasVisible)resize();
       motion();
     },
@@ -147,6 +159,7 @@ export function createScene(container,{onAvailabilityChange=()=>{}}={}){
       canvas.removeEventListener('webglcontextrestored',contextRestored);
       const resources=new Set();
       scene.traverse(object=>{
+        if(object.isInstancedMesh)resources.add(object);
         if(object.geometry)resources.add(object.geometry);
         for(const material of object.material?(Array.isArray(object.material)?object.material:[object.material]):[]){
           resources.add(material);

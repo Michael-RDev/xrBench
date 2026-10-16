@@ -78,6 +78,23 @@ set `XRGPU_DATABASE_URL` and pass `--no-docker`. The database role needs permiss
 to create the `xrgpu_benchmarks` schema and its tables. Database configuration is
 never sent to the browser or packaged into the app.
 
+ADB discovery uses the explicit `--adb` override first, then PATH, the repository's
+`artifacts/toolchain/android-sdk/platform-tools`, `ANDROID_HOME/platform-tools`,
+and `ANDROID_SDK_ROOT/platform-tools`. On Windows it also checks
+`%LOCALAPPDATA%\Android\Sdk\platform-tools`, Meta Quest Developer Hub's
+`resources\bin` under `%ProgramFiles%`, and Unity Hub editors under
+`%ProgramFiles%\Unity\Hub\Editor` (highest numeric editor version first).
+Only existing files in these known locations are selected; no downloads or PATH
+changes are needed. Custom installation locations can be selected explicitly:
+
+```powershell
+uv run python -m app --adb "C:\Program Files\Meta Quest Developer Hub\resources\bin\adb.exe"
+```
+
+An invalid explicit override reports an error without falling back to another
+installation. Restart xrBench after changing the installation or launch options.
+If the headset is then listed as unauthorized, approve USB debugging inside it.
+
 ## Build the native app
 
 Prepare the repository's pinned Android toolchain and stock native dependencies.
@@ -86,6 +103,7 @@ The exporter and controller use only the root uv environment.
 ```sh
 uv run --extra export --group dev python -m layers.engine.bootstrap_android
 uv run --extra export --group dev python -m layers.engine.prepare
+uv run --extra export --group dev python -m layers.engine.bootstrap_shaderc
 uv run --extra export --group dev python -m layers.export
 uv run --extra export --group dev python -m layers.engine.build
 ```
@@ -96,6 +114,23 @@ this matching APK on Run. Android Gradle dependencies may be downloaded on the
 first build. The app uses its own package, `org.xrgpu.benchmarks`, and a local
 debug signing key. Its debuggable build is necessary for ADB `run-as` access;
 this is a local development harness, not a store release.
+
+Windows builds use the pinned Windows Android archives, Ninja for Android,
+and Visual Studio 2022 with the Desktop development with C++ workload for the
+host FlatBuffers tools. `prepare` builds the exporter’s missing `flatc.exe` locally.
+The build uses `JAVA_HOME`, Java on PATH, or an installed Unity Hub editor's
+OpenJDK, in that order. Set `JAVA_HOME` to a JDK 17+ for other installations.
+`bootstrap_shaderc` builds the pinned official shader compiler and dependencies;
+the NDK's older compiler does not support the required Vulkan extensions.
+No global PATH or Unity files are changed. Linux and macOS use their corresponding
+Android archives. All downloaded archives are checksum-verified.
+
+The dependency CMake adaptation selects Windows host compilers while targeting
+Android, and the shader generator normalizes CRLF before preprocessing. Neither
+change modifies Vulkan kernels. Preparation verifies these exact changes
+alongside the existing timestamp-capability patch. Export fails early if the
+FlatBuffers tool is unavailable, rather than producing an entirely unsupported
+suite due to a missing build prerequisite.
 
 The dedicated APK packages only synthetic layer fixtures, exported layer programs,
 native libraries, and third-party notices. It does not need MiniLM or other model

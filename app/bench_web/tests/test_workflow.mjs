@@ -13,6 +13,7 @@ const paths={
   '/stats/app.js':'app/stats_for_nerds/web/app.js',
   '/bench/app.js':'app/bench_web/web/app.js',
   '/bench/device-view.mjs':'app/bench_web/web/device-view.mjs',
+  '/bench/results-view.mjs':'app/bench_web/web/results-view.mjs',
 };
 const drain=async()=>{for(let i=0;i<10;i++)await new Promise(resolve=>setImmediate(resolve));};
 async function page(kind,report=null,stateOverrides={},sceneMode='unavailable'){
@@ -66,6 +67,7 @@ async function page(kind,report=null,stateOverrides={},sceneMode='unavailable'){
   }
   await (await module(pretty?'/bench/app.js':'/stats/app.js')).evaluate();await drain();
   return {window,state,calls,faults,viewer,releaseScene:async()=>{releaseScene();await drain();},
+    setReport:value=>{report=value;},
     close:()=>window.close(),tick:async()=>{for(const callback of intervals)await callback();await drain();}};
 }
 
@@ -82,7 +84,7 @@ test('Run beneath the description starts the full suite once, preserves selectio
     assert.equal(doc.querySelector('.hero-actions #notice').hidden,true);
     assert.doesNotMatch(doc.body.textContent,/Local workspace|Connect\. Run\. Understand\.|01 \/ NATIVE COMPUTE|A closer look at what’s inside\./);
     assert.equal(doc.querySelector('figcaption'),null);
-    assert.equal(doc.querySelectorAll('main section').length,1);
+    assert.equal(doc.querySelector('#results').hidden,true);
     assert.equal(doc.querySelector('footer'),null);
     assert.equal(doc.querySelector('#mode'),null);
     assert.equal(p.calls.filter(c=>c.body).length,0);
@@ -96,6 +98,10 @@ test('Run beneath the description starts the full suite once, preserves selectio
     assert.equal(doc.querySelector('#run-label').textContent,'Stop');
     assert.match(doc.querySelector('#run-status').textContent,/Test 1 of 63/);
     assert.equal(doc.querySelector('#run-status').hidden,false);
+    assert.equal(doc.querySelector('#results').hidden,false);
+    assert.equal(doc.querySelectorAll('.layer-group').length,25);
+    assert.equal(doc.querySelectorAll('.case-table-wrap tbody tr').length,63);
+    assert.equal(doc.querySelector('#completion-count').textContent,'0 / 63 cases processed');
     doc.querySelector('#run').click();doc.querySelector('#run').click();await drain();
     assert.equal(p.calls.filter(c=>c.path.endsWith('/stop')).length,1);
     assert.equal(doc.querySelector('#run').disabled,true);
@@ -103,8 +109,70 @@ test('Run beneath the description starts the full suite once, preserves selectio
     doc.querySelector('#run').click();await drain();
     assert.equal(p.calls.filter(c=>c.path.endsWith('/stop')).length,1);
     p.state.jobs[0].status='canceled';await p.tick();
+    assert.equal(doc.querySelector('#run-phase').textContent,'Run stopped');
     assert.equal(doc.querySelector('#run').disabled,false);
     assert.equal(doc.querySelector('#run-label').textContent,'Run');
+  }finally{p.close();}
+});
+
+test('live layer evidence advances without another Run and preserves expanded groups and keyboard focus',async()=>{
+  const p=await page('bench');
+  try{
+    const doc=p.window.document;doc.querySelector('#run').click();await drain();
+    const [first,second]=catalog.cases;
+    const report={run_id:id,status:'running',suite_revision:'fixture-suite',configuration:p.state.jobs[0].configuration,
+      results:[{case:first.id,operation:first.operation,phase:'isolated',status:'passed',timing_valid:true,correctness:{passed:true},samples:[{execution_ms:1,gpu_ms:null},{execution_ms:3,gpu_ms:null}]}]};
+    p.setReport(report);
+    Object.assign(p.state.jobs[0],{report_available:true,report_revision:'one',progress:{current_case:second.id,completed_cases:1,total_cases:63}});
+    await p.tick();
+    assert.equal(doc.querySelector('#completion-count').textContent,'1 / 63 cases processed');
+    assert.match(doc.querySelector('#current-layer').textContent,new RegExp(second.id));
+    const firstRow=doc.querySelector('.case-table-wrap tbody tr');
+    assert.match(firstRow.textContent,/2\.000 ms/);assert.match(firstRow.textContent,/2\.900 ms/);
+    assert.equal(firstRow.lastElementChild.textContent,'—');
+    const group=doc.querySelector('.layer-group');group.open=true;group.querySelector('summary').focus();
+    await p.tick();
+    assert.equal(doc.querySelector('.layer-group').open,true);
+    assert.equal(doc.activeElement.tagName,'SUMMARY');
+    assert.equal(p.calls.filter(c=>c.path==='/api/runs'&&c.body).length,1);
+    report.status='complete';p.state.jobs[0].status='complete';p.state.jobs[0].report_revision='two';
+    await p.tick();
+    assert.equal(doc.querySelector('#run-phase').textContent,'Run complete');
+    assert.equal(doc.querySelector('#run-label').textContent,'Run');
+    assert.equal(doc.querySelector('#results-link').getAttribute('href'),'/stats/?run='+id);
+    doc.querySelector('#run').click();await drain();
+    assert.equal(doc.querySelector('#completion-count').textContent,'0 / 63 cases processed');
+    assert.doesNotMatch(doc.querySelector('#layer-results').textContent,/2\.000 ms/);
+  }finally{p.close();}
+});
+
+test('result rows distinguish failures, unsupported cases and flagged timings without inventing measurements',async()=>{
+  const cases=catalog.cases.slice(0,3),report={run_id:id,status:'complete',suite_revision:'fixture-suite',
+    configuration:{mode:'isolated',preset:'smoke',cases:cases.map(c=>c.id)},results:cases.map((c,i)=>({case:c.id,operation:c.operation,phase:'isolated',status:['passed','failed','skipped'][i],timing_valid:i!==0,samples:[{execution_ms:123,gpu_ms:12}],reason:i===2?'<img src=x onerror=alert(1)> unsupported':null}))};
+  const p=await page('bench',report);
+  try{
+    const doc=p.window.document;
+    assert.equal(doc.querySelector('#completion-count').textContent,'3 / 3 cases processed');
+    assert.match(doc.querySelector('#result-counts').textContent,/1 passed1 failed1 unsupported/);
+    assert.match(doc.querySelector('#layer-results').textContent,/Timing flagged/);
+    assert.doesNotMatch(doc.querySelector('#layer-results').textContent,/123\.000 ms|12\.000 ms/);
+    assert.equal(doc.querySelector('#layer-results img'),null);
+    assert.match(doc.querySelector('#layer-results').textContent,/<img src=x/);
+  }finally{p.close();}
+});
+
+test('headset disconnect retains partial results and resumes the same run',async()=>{
+  const p=await page('bench');
+  try{
+    const doc=p.window.document;doc.querySelector('#run').click();await drain();
+    p.state.jobs[0].status='disconnected';p.state.jobs[0].message='Reconnect the headset to recover this run';p.state.devices=[];
+    await p.tick();
+    assert.equal(doc.querySelector('#run-phase').textContent,'Waiting for connection');
+    assert.equal(doc.querySelector('#run-label').textContent,'Stop');
+    assert.equal(doc.querySelector('#results').hidden,false);
+    p.state.jobs[0].status='running';await p.tick();
+    assert.equal(doc.querySelector('#run-phase').textContent,'Benchmarking');
+    assert.equal(p.calls.filter(c=>c.path==='/api/runs'&&c.body).length,1);
   }finally{p.close();}
 });
 

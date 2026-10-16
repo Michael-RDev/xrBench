@@ -34,6 +34,16 @@
       </div>
     </figure>
   </section>
+  <section id="results" class="results" aria-labelledby="results-title" hidden>
+    <div class="results-heading"><div><p class="eyebrow">Measured on your headset</p><h2 id="results-title">Every layer. One run.</h2></div><a id="results-link" href="/stats/">Explore full results ↗</a></div>
+    <div class="run-overview">
+      <div class="run-current"><span id="run-phase" class="run-phase">Preparing</span><p id="current-layer" role="status" aria-live="polite"></p><p id="run-context" class="run-context"></p></div>
+      <div class="run-completion"><span id="completion-count"></span><progress id="suite-progress" value="0" max="63" aria-label="Benchmark cases processed"></progress><div id="result-counts" class="result-counts"></div></div>
+    </div>
+    <p class="results-note">Each layer shows its median latency range across measured input shapes. Expand a layer for individual cases. Warmups and correctness checks are excluded.</p>
+    <div id="layer-results" class="layer-results"></div>
+    <p class="results-footnote">Median and p95 include input staging, native Vulkan execution, and output copying. GPU time, when available, sums operation timestamps. Results stay local.</p>
+  </section>
 </main>
 
 </body></html>

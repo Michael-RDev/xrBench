@@ -3,6 +3,8 @@ import hashlib
 import importlib.metadata
 import json
 import operator
+import os
+import subprocess
 from pathlib import Path
 
 from layers import catalog, correctness, fixtures, module, reference, revision
@@ -34,6 +36,14 @@ def export_program(layer, inputs, destination):
 
 def export_suite(output):
     import torch
+    from executorch.exir._serialize._flatbuffer import _get_flatc_path
+    flatc = Path(__file__).parent.parent / "artifacts/toolchain/flatbuffers-build/Release/flatc.exe"
+    if flatc.is_file():
+        os.environ.setdefault("FLATC_EXECUTABLE", str(flatc))
+    try:
+        subprocess.run([_get_flatc_path(), "--version"], check=True, capture_output=True)
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise RuntimeError("FlatBuffers compiler unavailable. Run python -m layers.engine.prepare first, or set FLATC_EXECUTABLE.") from error
     torch.set_num_threads(1)
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
@@ -64,6 +74,7 @@ def export_suite(output):
         except Exception as error:
             target.unlink(missing_ok=True)
             row.update(export_status="unsupported", reason=f"{type(error).__name__}: {error}")
+            print(f"  Unsupported: {row['reason']}", flush=True)
         suite["cases"].append(row)
     save(output / "suite.json", suite)
     paths = {"suite.json"}
