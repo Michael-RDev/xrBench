@@ -26,17 +26,24 @@ Benchmark eligibility remains independent of preview availability.
 Drag to rotate, scroll or pinch to zoom, and use Reset view to return home. Focus
 the model to use arrow keys, +/−, and Home. The headset is built from ivory beveled
 blocks with graphite cushioning and three dark front sensor windows. Detection
-plays a 2.5-second assembly: blocks float along curved paths into the shell, sensors,
-and soft straps, then settle into gentle idle motion once authorized. The shared
+plays a 3.2-second exploded assembly: recognizable shell, cushion/optics, sensor
+columns, and strap components fade in while suspended apart. The shell and cushion
+seat first, followed by the sensors and straps, with a restrained overshoot and
+staggered cube settling. A brief sensor glint and ring pulse finish the reveal,
+then the headset settles into gentle idle motion once authorized. Status-node
+colors remain tied to benchmark results throughout. The shared
 cube geometry is rendered in four instanced batches; no interior shell cubes are
 drawn.
 
 Assembly plays when a recognized Quest 3 first appears or reconnects, including
 while awaiting USB authorization. Polling and authorization changes do not replay
-it. Rotating or zooming continues assembly but pauses subsequent idle motion;
+it. The camera begins about 20% wider, with additional clearance on narrow screens,
+and arcs 12 degrees into the home view. Rotating or zooming immediately takes over
+the camera, continues assembly, and pauses subsequent idle motion;
 Reset view completes assembly and restores the home camera without replaying it.
-Reduced motion shows the completed model immediately. Hidden pages and WebGL
-context loss pause animation time. Unavailable WebGL falls back to text while
+Reduced motion shows the completed model immediately without camera motion or
+finishing effects. Hidden pages and WebGL context loss pause the entire reveal's
+animation time. Unavailable WebGL falls back to text while
 leaving benchmark controls usable.
 
 The original model in `src/quest3.js` uses the standard soft strap and exterior

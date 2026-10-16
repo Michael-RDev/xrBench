@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
-import {createQuest3} from './quest3.js';
+import {createQuest3,ASSEMBLY_DURATION_MS} from './quest3.js';
 import {deviceTransition} from '../web/device-view.mjs';
 
 export function createScene(container,{onAvailabilityChange=()=>{}}={}){
@@ -15,7 +15,7 @@ export function createScene(container,{onAvailabilityChange=()=>{}}={}){
   const key=new THREE.DirectionalLight(0xfffaf4,3.2);key.position.set(-3,6,5);scene.add(key);
   const fill=new THREE.DirectionalLight(0xdfeaff,1.6);fill.position.set(4,2,-3);scene.add(fill);
   const model=createQuest3(),headset=model.group;scene.add(headset);
-  const orbit=new THREE.Group(),nodes=[];orbit.position.z=-1.05;scene.add(orbit);
+  const orbit=new THREE.Group(),nodes=[];orbit.name='Benchmark orbit';orbit.position.z=-1.05;scene.add(orbit);
   const nodeGeometry=new THREE.SphereGeometry(.026,10,8);
   for(let i=0;i<25;i++){
     const angle=i/25*Math.PI*2;
@@ -24,7 +24,9 @@ export function createScene(container,{onAvailabilityChange=()=>{}}={}){
     orbit.add(node);nodes.push(node);
   }
   const points=Array.from({length:97},(_,i)=>new THREE.Vector3(Math.cos(i/96*Math.PI*2)*2.35,-1.14,Math.sin(i/96*Math.PI*2)*2.35));
-  orbit.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color:0xdde2d6,transparent:true,opacity:.65})));
+  const ring=new THREE.Line(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color:0xdde2d6,transparent:true,opacity:.65}));
+  ring.name='Assembly halo';orbit.add(ring);
+  const ringColor=new THREE.Color(0xdde2d6),ringPulseColor=new THREE.Color(0x8da88e);
   const canvas=renderer.domElement,fallback=container.querySelector('#scene-fallback');
   canvas.tabIndex=0;canvas.setAttribute('role','img');
   canvas.setAttribute('aria-label','Interactive block-built 3D model of Meta Quest 3');
@@ -37,14 +39,45 @@ export function createScene(container,{onAvailabilityChange=()=>{}}={}){
   controls.touches.TWO=THREE.TOUCH.DOLLY_ROTATE;
   const reduce=matchMedia('(prefers-reduced-motion: reduce)');
   let raf=0,last=0,frameTime=0,lost=false,disposed=false,current=null,userControlled=false;
-  let assembly=null,idleTime=0;
+  let assembly=null,idleTime=0,positioningCamera=false;
   let homeDistance=8.5;
   const homeDirection=new THREE.Vector3(3.8,2.1,7).normalize();
+  const homeSpherical=new THREE.Spherical().setFromVector3(homeDirection),revealSpherical=homeSpherical.clone();
+  const cameraOffset=new THREE.Vector3();
   function draw(){if(!disposed&&!lost&&!document.hidden&&current?.visible)renderer.render(scene,camera);}
+  function controlChange(){if(!positioningCamera)draw();}
+  function updateCamera(){
+    // Automatic camera updates share the tick's render rather than drawing twice at 30 FPS.
+    positioningCamera=true;controls.update();positioningCamera=false;
+  }
   function pose(){headset.position.y=0;headset.rotation.set(0,0,-.045);headset.scale.setScalar(1);}
   function home(){
     camera.position.copy(controls.target).addScaledVector(homeDirection,homeDistance);
-    controls.update();
+    updateCamera();
+  }
+  function revealCamera(progress){
+    if(progress===1){home();return;}
+    const remaining=1-progress*progress*(3-2*progress);
+    // Forward sensor columns need extra side clearance in narrow canvases until they seat.
+    const narrow=THREE.MathUtils.clamp((1.35-camera.aspect)/.35,0,1);
+    const framing=THREE.MathUtils.smoothstep(remaining,0,.65)*.12*narrow;
+    revealSpherical.set(homeDistance*(1+.2*remaining+framing),homeSpherical.phi,
+      homeSpherical.theta+THREE.MathUtils.degToRad(12)*remaining);
+    camera.position.copy(controls.target).add(cameraOffset.setFromSpherical(revealSpherical));
+    updateCamera();
+  }
+  function reveal(progress){
+    model.setAssemblyProgress(progress);
+    const time=progress*ASSEMBLY_DURATION_MS;
+    // Fade the composed image smoothly; transparent block batches would show sorting artifacts.
+    canvas.style.opacity=String(THREE.MathUtils.smoothstep(time,0,450));
+    const pulse=time>2600&&time<ASSEMBLY_DURATION_MS?
+      Math.sin(Math.PI*(time-2600)/(ASSEMBLY_DURATION_MS-2600))**2:0;
+    ring.material.color.copy(ringColor).lerp(ringPulseColor,pulse);
+    ring.material.opacity=.65+.35*pulse;
+    ring.scale.set(1+.055*pulse,1,1+.055*pulse);
+    headset.position.y=.015*pulse;
+    if(!userControlled)revealCamera(progress);
   }
   function resize(){
     if(disposed)return;
@@ -53,26 +86,23 @@ export function createScene(container,{onAvailabilityChange=()=>{}}={}){
     renderer.setSize(width,height,false);camera.aspect=width/height;camera.updateProjectionMatrix();
     homeDistance=8.5*Math.max(1,1.05/camera.aspect);
     controls.minDistance=3.8;controls.maxDistance=homeDistance*1.65;
-    if(!userControlled)home();
+    if(!userControlled)revealCamera(assembly===null?1:assembly/ASSEMBLY_DURATION_MS);
     draw();
   }
   function animated(){
     return !disposed&&!lost&&!document.hidden&&!reduce.matches&&current?.visible&&
       (assembly!==null || current.authorized&&!userControlled);
   }
-  function finishAssembly(){assembly=null;idleTime=0;model.setAssemblyProgress(1);}
+  function finishAssembly(){assembly=null;idleTime=0;reveal(1);}
   function tick(time){
     raf=0;
     if(!animated())return;
     frameTime+=Math.max(0,time-last);last=time;
     if(frameTime>=1000/30){
       if(assembly!==null){
-        assembly=Math.min(2500,assembly+frameTime);
-        const progress=assembly/2500;
-        model.setAssemblyProgress(progress);
-        // A small final lift settles to the same pose from which idle starts.
-        headset.position.y=.025*Math.sin(Math.PI*THREE.MathUtils.clamp((progress-.88)/.12,0,1));
-        if(assembly===2500){finishAssembly();pose();}
+        assembly=Math.min(ASSEMBLY_DURATION_MS,assembly+frameTime);
+        reveal(assembly/ASSEMBLY_DURATION_MS);
+        if(assembly===ASSEMBLY_DURATION_MS){finishAssembly();pose();}
       }else{
         idleTime+=frameTime;
         headset.position.y=Math.sin(idleTime*.0007)*.025;
@@ -91,7 +121,7 @@ export function createScene(container,{onAvailabilityChange=()=>{}}={}){
   }
   function interact(){
     userControlled=true;
-    // Assembly continues under the user's camera; only idle motion is paused.
+    // Assembly continues, but the camera arc and subsequent idle motion relinquish control.
     motion();
   }
   function resetView(){
@@ -124,7 +154,7 @@ export function createScene(container,{onAvailabilityChange=()=>{}}={}){
     resize();motion();onAvailabilityChange(true);
   }
   const observer=new ResizeObserver(resize);observer.observe(container);
-  controls.addEventListener('start',interact);controls.addEventListener('change',draw);
+  controls.addEventListener('start',interact);controls.addEventListener('change',controlChange);
   canvas.addEventListener('keydown',keydown);
   canvas.addEventListener('webglcontextlost',contextLost);
   canvas.addEventListener('webglcontextrestored',contextRestored);
@@ -138,7 +168,7 @@ export function createScene(container,{onAvailabilityChange=()=>{}}={}){
       if(transition.identityChanged || !wasVisible&&view.visible){userControlled=false;finishAssembly();pose();home();}
       if(transition.enter){
         userControlled=false;pose();idleTime=0;assembly=reduce.matches?null:0;
-        model.setAssemblyProgress(reduce.matches?1:0);
+        reveal(reduce.matches?1:0);
       }
       if(!view.visible){finishAssembly();pose();}
       if(view.visible&&!wasVisible)resize();
@@ -154,7 +184,7 @@ export function createScene(container,{onAvailabilityChange=()=>{}}={}){
       if(disposed)return;
       disposed=true;cancelAnimationFrame(raf);observer.disconnect();
       reduce.removeEventListener('change',motion);document.removeEventListener('visibilitychange',motion);
-      controls.removeEventListener('start',interact);controls.removeEventListener('change',draw);controls.dispose();
+      controls.removeEventListener('start',interact);controls.removeEventListener('change',controlChange);controls.dispose();
       canvas.removeEventListener('keydown',keydown);canvas.removeEventListener('webglcontextlost',contextLost);
       canvas.removeEventListener('webglcontextrestored',contextRestored);
       const resources=new Set();

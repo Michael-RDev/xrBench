@@ -5,14 +5,15 @@ import {readFile} from 'node:fs/promises';
 import {JSDOM} from 'jsdom';
 import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
-import {createQuest3} from '../src/quest3.js';
+import {createQuest3,ASSEMBLY_DURATION_MS} from '../src/quest3.js';
 import {deviceView,deviceTransition} from '../web/device-view.mjs';
 
 const ready=deviceView({devices:[{serial:'quest',model:'Quest 3',state:'device',supported:true}]});
 async function viewer(reduced=false){
   const dom=new JSDOM('<div id="scene"><div id="scene-fallback"></div></div>',{pretendToBeVisual:true});
   const {window}=dom,document=window.document,container=document.querySelector('#scene');
-  container.getBoundingClientRect=()=>({width:540,height:400});
+  let width=540,height=400;
+  container.getBoundingClientRect=()=>({width,height});
   let time=0,hidden=false,sequence=0,renderer,observer;
   const frames=new Map(),availability=[];
   Object.defineProperty(document,'hidden',{get:()=>hidden});
@@ -24,7 +25,7 @@ async function viewer(reduced=false){
       this.domElement.setPointerCapture=()=>{};this.domElement.releasePointerCapture=()=>{};
     }
     setPixelRatio(){} setClearColor(){} setSize(){}
-    render(scene,camera){this.renders++;this.scene=scene;this.camera=camera;}
+    render(scene,camera){this.renders++;this.scene=scene;this.camera=camera;scene.updateMatrixWorld(true);camera.updateMatrixWorld(true);}
     dispose(){this.disposed=true;}
   }
   const context=vm.createContext({document,devicePixelRatio:1,performance:{now:()=>time},
@@ -33,7 +34,7 @@ async function viewer(reduced=false){
       constructor(callback){observer=this;this.callback=callback;}observe(){}disconnect(){this.disconnected=true;}
     }});
   const sources={three:{...THREE,WebGLRenderer:Renderer},
-    'three/addons/controls/OrbitControls.js':{OrbitControls},'./quest3.js':{createQuest3},
+    'three/addons/controls/OrbitControls.js':{OrbitControls},'./quest3.js':{createQuest3,ASSEMBLY_DURATION_MS},
     '../web/device-view.mjs':{deviceTransition}};
   const module=new vm.SourceTextModule(await readFile(new URL('../src/scene.js',import.meta.url),'utf8'),{context});
   await module.link(specifier=>new vm.SyntheticModule(Object.keys(sources[specifier]),function(){
@@ -48,6 +49,7 @@ async function viewer(reduced=false){
     (type==='pointerdown'?renderer.domElement:document).dispatchEvent(event);
   };
   return {scene,renderer,media,frames,availability,key,pointer,window,observer,
+    resize(w,h){width=w;height=h;observer.callback();},
     advance(ms){time+=ms;const callbacks=[...frames.values()];frames.clear();for(const callback of callbacks)callback(time);},
     hide(value){hidden=value;document.dispatchEvent(new window.Event('visibilitychange'));},
     close(){scene.dispose();window.close();}};
@@ -56,7 +58,7 @@ async function viewer(reduced=false){
 test('orbit input preserves camera across polls, supports touch/pinch, zoom limits and reset',async()=>{
   const v=await viewer();
   try{
-    v.scene.setDevice(ready);v.advance(2500);
+    v.scene.setDevice(ready);v.advance(ASSEMBLY_DURATION_MS);
     const camera=v.renderer.camera,home=camera.position.clone(),target=new THREE.Vector3(0,0,-1.05);
     v.key('ArrowRight');const rotated=camera.position.clone();assert.ok(rotated.distanceTo(home)>.1);
     assert.equal(v.frames.size,0);
@@ -162,26 +164,29 @@ test('block model has a bounded surface-only budget, shared bevels, deterministi
   }finally{disposeModel(a);disposeModel(b);}
 });
 
-test('the assembly cloud and finished model remain within desktop and mobile home framing',()=>{
-  const model=createQuest3(),matrix=new THREE.Matrix4(),point=new THREE.Vector3();
-  model.group.rotation.z=-.045;model.group.updateMatrixWorld(true);
-  try{
-    for(const aspect of [1.35,1,.68]){
-      const camera=new THREE.PerspectiveCamera(35,aspect,.1,60),target=new THREE.Vector3(0,0,-1.05);
-      camera.position.copy(target).addScaledVector(new THREE.Vector3(3.8,2.1,7).normalize(),8.5*Math.max(1,1.05/aspect));
-      camera.lookAt(target);camera.updateMatrixWorld(true);
-      for(const progress of [0,.15,.3,.5,.7,.9,1]){
-        model.setAssemblyProgress(progress);
-        for(const mesh of model.group.children)for(let i=0;i<mesh.count;i++){
-          mesh.getMatrixAt(i,matrix);matrix.premultiply(model.group.matrixWorld);
+test('the exploded components stay inside the moving camera on desktop, mobile, and resize',async()=>{
+  const matrix=new THREE.Matrix4(),point=new THREE.Vector3();
+  for(const aspect of [1.8,1.35,1,.68]){
+    const v=await viewer();
+    try{
+      v.resize(400*aspect,400);v.scene.setDevice(ready);
+      for(let step=0;step<=40;step++){
+        if(step)v.advance(ASSEMBLY_DURATION_MS/40);
+        // Resize mid-reveal and back: reframing must preserve the timeline.
+        if(step===15)v.resize(320,470);
+        if(step===25)v.resize(400*aspect,400);
+        const model=headset(v),camera=v.renderer.camera;
+        for(const mesh of model.children)for(let i=0;i<mesh.count;i++){
+          mesh.getMatrixAt(i,matrix);matrix.premultiply(model.matrixWorld);
           for(const x of [-.5,.5])for(const y of [-.5,.5])for(const z of [-.5,.5]){
             point.set(x,y,z).applyMatrix4(matrix).project(camera);
-            assert.ok(Math.abs(point.x)<.98&&Math.abs(point.y)<.98,`Clipped at ${aspect}, ${progress}: ${point.toArray()}`);
+            assert.ok(Math.abs(point.x)<.98&&Math.abs(point.y)<.98&&Math.abs(point.z)<1,
+              `Clipped at ${aspect}, step ${step}: ${point.toArray()}`);
           }
         }
       }
-    }
-  }finally{disposeModel(model);}
+    }finally{v.close();}
+  }
 });
 
 test('assembly survives polling and authorization changes and ends at the final model',async()=>{
@@ -193,7 +198,7 @@ test('assembly survives polling and authorization changes and ends at the final 
     v.advance(800);const middle=matrices(headset(v));assert.notDeepEqual(middle,start);
     v.scene.setDevice(structuredClone(unauthorized));assert.deepEqual(matrices(headset(v)),middle);
     v.scene.setDevice(ready);assert.deepEqual(matrices(headset(v)),middle);
-    v.advance(1700);assert.deepEqual(matrices(headset(v)),matrices(finalModel.group));
+    v.advance(ASSEMBLY_DURATION_MS-800);assert.deepEqual(matrices(headset(v)),matrices(finalModel.group));
     v.scene.setDevice(structuredClone(ready));assert.deepEqual(matrices(headset(v)),matrices(finalModel.group));
     v.scene.setDevice(deviceView({devices:[]}));assert.equal(v.frames.size,0);
     v.scene.setDevice(ready);assert.deepEqual(matrices(headset(v)),start);
@@ -209,7 +214,7 @@ test('orbiting during assembly preserves its progress and the user camera, then 
     const middle=matrices(headset(v));v.key('ArrowRight');
     const camera=v.renderer.camera.position.clone();
     assert.deepEqual(matrices(headset(v)),middle);assert.equal(v.frames.size,1);
-    v.scene.setDevice(structuredClone(ready));v.advance(1900);
+    v.scene.setDevice(structuredClone(ready));v.advance(ASSEMBLY_DURATION_MS-600);
     assert.deepEqual(matrices(headset(v)),matrices(finalModel.group));
     assert.ok(camera.distanceTo(v.renderer.camera.position)<1e-10);
     assert.equal(v.frames.size,0);
@@ -227,7 +232,7 @@ test('hidden pages and context loss pause assembly time without catching up on r
     v.advance(10000);
     v.renderer.domElement.dispatchEvent(new v.window.Event('webglcontextrestored'));
     assert.deepEqual(matrices(headset(v)),later);
-    v.advance(1500);assert.deepEqual(matrices(headset(v)),matrices(finalModel.group));
+    v.advance(ASSEMBLY_DURATION_MS-1000);assert.deepEqual(matrices(headset(v)),matrices(finalModel.group));
   }finally{v.close();disposeModel(finalModel);}
 });
 
@@ -247,6 +252,113 @@ test('Reset, reduced motion, and disconnect cannot leave a partially built model
     v.scene.setDevice(deviceView({devices:[]}));assert.equal(v.frames.size,0);
     assert.equal(headset(v).visible,false);
     v.scene.setDevice(ready);assert.notDeepEqual(matrices(headset(v)),final);
-    v.advance(2500);assert.deepEqual(matrices(headset(v)),final);
+    v.advance(ASSEMBLY_DURATION_MS);assert.deepEqual(matrices(headset(v)),final);
   }finally{v.close();disposeModel(finalModel);}
+});
+
+test('exploded parts preserve their shape across materials and assemble in component order',()=>{
+  const model=createQuest3(),matrix=new THREE.Matrix4();
+  const points=()=>model.group.children.flatMap(mesh=>Array.from({length:mesh.count},(_,i)=>{
+    mesh.getMatrixAt(i,matrix);
+    return {mesh:mesh.name,position:new THREE.Vector3().setFromMatrixPosition(matrix)};
+  }));
+  try{
+    const final=points();model.setAssemblyProgress(0);const start=points();
+    const shell=final.map((p,i)=>p.mesh==='Ivory shell blocks'?i:-1).filter(i=>i>=0);
+    const rear=final.map((p,i)=>p.mesh==='Graphite cushion blocks'||
+      p.mesh==='Sensor and lens blocks'&&p.position.z<0?i:-1).filter(i=>i>=0);
+    const sensors=[-1,0,1].map(column=>final.map((p,i)=>p.mesh==='Sensor and lens blocks'&&
+      p.position.z>.4&&Math.round(p.position.x/1.05)===column?i:-1).filter(i=>i>=0));
+    // Every pair keeps its spacing even when foam and lenses occupy different draw batches.
+    for(const indices of [shell,rear,...sensors]){
+      assert.ok(indices.length>1);
+      const anchor=indices[0];
+      for(const i of indices)assert.ok(Math.abs(start[i].position.distanceTo(start[anchor].position)-
+        final[i].position.distanceTo(final[anchor].position))<1e-6);
+    }
+    const center=(values,indices)=>indices.reduce((sum,i)=>sum.add(values[i].position),new THREE.Vector3()).divideScalar(indices.length);
+    assert.ok(center(start,shell).z-center(final,shell).z>.5);
+    assert.ok(center(start,rear).z-center(final,rear).z<-.5);
+    for(const column of sensors)assert.ok(center(start,column).z-center(final,column).z>1.2);
+    model.setAssemblyProgress(1800/ASSEMBLY_DURATION_MS);const middle=points();
+    for(const i of [...shell,...rear])assert.ok(middle[i].position.distanceTo(final[i].position)<1e-6);
+    assert.ok(sensors.flat().some(i=>middle[i].position.distanceTo(final[i].position)>.05));
+    const strap=final.findIndex(p=>p.mesh==='Soft strap blocks');
+    assert.ok(middle[strap].position.distanceTo(final[strap].position)>.4);
+    model.setAssemblyProgress(2600/ASSEMBLY_DURATION_MS);
+    points().forEach((p,i)=>assert.ok(p.position.distanceTo(final[i].position)<1e-6));
+  }finally{disposeModel(model);}
+});
+
+test('cinematic camera pushes in along an arc and ends exactly at home without replaying on polls',async()=>{
+  const v=await viewer(),target=new THREE.Vector3(0,0,-1.05);
+  try{
+    v.scene.setDevice(ready);
+    const camera=v.renderer.camera,start=camera.position.clone();
+    assert.ok(Math.abs(start.distanceTo(target)-8.5*1.2)<1e-8);
+    const angle=p=>new THREE.Spherical().setFromVector3(p.clone().sub(target)).theta;
+    const renders=v.renderer.renders;
+    v.advance(ASSEMBLY_DURATION_MS/2);const middle=camera.position.clone();
+    assert.equal(v.renderer.renders,renders+1); // Camera and model share a single frame render.
+    assert.ok(middle.distanceTo(target)<start.distanceTo(target));
+    assert.ok(angle(middle)<angle(start));
+    v.scene.setDevice(structuredClone(ready));assert.ok(camera.position.distanceTo(middle)<1e-10);
+    v.advance(ASSEMBLY_DURATION_MS/2);const end=camera.position.clone();
+    assert.ok(Math.abs(end.distanceTo(target)-8.5)<1e-8);
+    assert.ok(Math.abs(angle(start)-angle(end)-THREE.MathUtils.degToRad(12))<1e-8);
+    v.scene.resetView();assert.ok(camera.position.distanceTo(end)<1e-10);
+  }finally{v.close();}
+});
+
+test('drag and wheel input take over the camera during assembly, including across resize',async()=>{
+  for(const input of ['drag','wheel']){
+    const v=await viewer();
+    try{
+      v.scene.setDevice(ready);v.advance(700);
+      const before=v.renderer.camera.position.clone();
+      if(input==='drag'){
+        v.pointer('pointerdown',1,150,200,'mouse');v.pointer('pointermove',1,220,170,'mouse');
+        v.pointer('pointerup',1,220,170,'mouse');
+      }else{
+        v.renderer.domElement.dispatchEvent(new v.window.WheelEvent('wheel',{deltaY:-120,cancelable:true}));
+      }
+      const controlled=v.renderer.camera.position.clone();assert.ok(controlled.distanceTo(before)>.01);
+      v.resize(390,360);v.scene.setDevice(structuredClone(ready));v.advance(ASSEMBLY_DURATION_MS-700);
+      assert.ok(v.renderer.camera.position.distanceTo(controlled)<1e-10);
+      assert.equal(v.frames.size,0);
+    }finally{v.close();}
+  }
+});
+
+test('fade and finishing accents restore exactly, preserve status colors, and honor reduced motion',async()=>{
+  const v=await viewer();
+  try{
+    v.scene.setDevice(ready);
+    const model=headset(v),halo=v.renderer.scene.getObjectByName('Assembly halo');
+    const nodes=v.renderer.scene.getObjectByName('Benchmark orbit').children.filter(o=>o.isMesh);
+    const sensor=model.getObjectByName('Sensor and lens blocks');
+    const finalColors=Array.from(sensor.instanceColor.array),ringColor=halo.material.color.clone();
+    const canvas=v.renderer.domElement;
+    assert.equal(canvas.style.opacity,'0');
+    v.advance(225);assert.ok(Number(canvas.style.opacity)>0&&Number(canvas.style.opacity)<1);
+    v.advance(225);assert.equal(canvas.style.opacity,'1');
+    v.scene.update(['passed','attention','running']);const statuses=nodes.map(n=>n.material.color.getHex());
+    v.advance(2450);assert.ok(halo.scale.x>1&&halo.material.opacity>.65);
+    assert.notDeepEqual(Array.from(sensor.instanceColor.array),finalColors);
+    assert.deepEqual(nodes.map(n=>n.material.color.getHex()),statuses);
+    v.hide(true);v.advance(5000);v.hide(false);
+    assert.ok(halo.scale.x>1&&halo.material.opacity>.65);
+    v.media.matches=true;v.media.dispatchEvent(new v.window.Event('change'));
+    assert.equal(canvas.style.opacity,'1');
+    assert.deepEqual(Array.from(sensor.instanceColor.array),finalColors);
+    assert.equal(halo.scale.x,1);assert.equal(halo.material.opacity,.65);
+    assert.ok(halo.material.color.equals(ringColor));assert.equal(v.frames.size,0);
+    assert.ok(Math.abs(v.renderer.camera.position.distanceTo(new THREE.Vector3(0,0,-1.05))-8.5)<1e-8);
+    v.media.matches=false;v.media.dispatchEvent(new v.window.Event('change'));
+    v.scene.setDevice({...ready,serial:'next'});v.advance(2900);v.scene.resetView();
+    assert.deepEqual(Array.from(sensor.instanceColor.array),finalColors);assert.equal(halo.scale.x,1);
+    v.scene.setDevice({...ready,serial:'last'});v.advance(2900);v.advance(300);
+    assert.deepEqual(Array.from(sensor.instanceColor.array),finalColors);assert.equal(halo.scale.x,1);
+    assert.deepEqual(nodes.map(n=>n.material.color.getHex()),statuses);
+  }finally{v.close();}
 });
