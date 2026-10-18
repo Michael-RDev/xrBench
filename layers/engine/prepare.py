@@ -3,6 +3,7 @@ import os
 import subprocess
 
 from layers.engine.paths import ENGINE, ROOT
+from layers.engine.kernel_hooks import backend_source, matmul_source
 
 SUBMODULES = [
     "backends/vulkan/third-party/Vulkan-Headers",
@@ -43,7 +44,7 @@ def verify():
         if git("rev-parse", "HEAD", cwd=source).stdout.strip() != pins[name]["commit"]:
             raise RuntimeError(f"Pinned dependency mismatch: {name}")
         changed = set(git("diff", "HEAD", "--name-only", cwd=source).stdout.splitlines())
-        expected = {"backends/vulkan/runtime/VulkanBackend.cpp", "third-party/CMakeLists.txt", "backends/vulkan/runtime/gen_vulkan_spv.py"} if name == "executorch" else set()
+        expected = {"backends/vulkan/runtime/VulkanBackend.cpp", "backends/vulkan/runtime/graph/ops/impl/Matmul.cpp", "third-party/CMakeLists.txt", "backends/vulkan/runtime/gen_vulkan_spv.py"} if name == "executorch" else set()
         if changed != expected:
             raise RuntimeError(f"Unexpected dependency modifications: {name}: {sorted(changed)}")
         if name == "executorch":
@@ -51,9 +52,12 @@ def verify():
             git("apply", "--reverse", "--check", str(patch), cwd=source)
             backend = "backends/vulkan/runtime/VulkanBackend.cpp"
             original = git("show", f"HEAD:{backend}", cwd=source).stdout
-            expected_text = ('#include "timing.h"\n' + original).replace("config.enable_querypool = true;", "config.enable_querypool = xrbench::gpu_timestamps_supported;")
+            expected_text = backend_source(original)
             if (source / backend).read_text() != expected_text:
-                raise RuntimeError("Vulkan backend has changes beyond capability-gated timestamps")
+                raise RuntimeError("Vulkan backend differs from the declared timestamp/dispatch hooks")
+            matmul = "backends/vulkan/runtime/graph/ops/impl/Matmul.cpp"
+            if (source / matmul).read_text() != matmul_source(git("show", f"HEAD:{matmul}", cwd=source).stdout):
+                raise RuntimeError("Matmul differs from the declared candidate selection hook")
             cmake = "third-party/CMakeLists.txt"
             if (source / cmake).read_text() != windows_host_cmake(git("show", f"HEAD:{cmake}", cwd=source).stdout):
                 raise RuntimeError("Dependency CMake has changes beyond Windows host tool selection")
@@ -62,7 +66,7 @@ def verify():
                 raise RuntimeError("Shader generator has changes beyond CRLF normalization")
             extras = git("ls-files", "--others", "--exclude-standard", cwd=source).stdout.splitlines()
             if any(p.endswith((".glsl", ".yaml", ".cpp", ".h")) for p in extras):
-                raise RuntimeError("Untracked native sources in dependency checkout; stock kernels required")
+                raise RuntimeError("Put candidate sources in kernels/, not the pinned dependency checkout")
 
 
 def prepare():
@@ -95,6 +99,7 @@ def prepare():
         generator.write_text(shader_newlines(original))
     elif generator.read_text() != shader_newlines(original):
         raise RuntimeError("Unexpected shader generator changes; refusing to overwrite")
+    install_kernel_hooks()
     verify()
     if os.name == "nt":
         build = ROOT / "artifacts/toolchain/flatbuffers-build"
@@ -103,6 +108,19 @@ def prepare():
                         "-DFLATBUFFERS_BUILD_FLATLIB=OFF"], check=True)
         subprocess.run(["cmake", "--build", str(build), "--config", "Release", "--target", "flatc", "-j", "4"], check=True)
     print("Pinned stock native dependencies ready.")
+
+
+def install_kernel_hooks():
+    source = ROOT / "artifacts/deps/executorch"
+    for relative, transform in (("backends/vulkan/runtime/VulkanBackend.cpp", backend_source),
+                                ("backends/vulkan/runtime/graph/ops/impl/Matmul.cpp", matmul_source)):
+        path = source / relative
+        original = git("show", f"HEAD:{relative}", cwd=source).stdout
+        previous = ('#include "timing.h"\n' + original).replace("config.enable_querypool = true;", "config.enable_querypool = xrbench::gpu_timestamps_supported;") if relative.endswith("VulkanBackend.cpp") else original
+        expected = transform(original)
+        if path.read_text() not in (original, previous, expected):
+            raise RuntimeError("Refusing to overwrite unrecognized dependency edits: " + relative)
+        if path.read_text() != expected:path.write_text(expected)
 
 
 if __name__ == "__main__":

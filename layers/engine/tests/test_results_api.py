@@ -30,7 +30,7 @@ def test_committed_results_api_and_frontend_routes(tmp_path, report):
         return urllib.request.urlopen(urllib.request.Request(f'http://127.0.0.1:{server.server_port}'+path,
             headers={'X-XRGPU-Session': token, 'Content-Type': 'application/json'}, data=body), timeout=3)
     try:
-        for path, text in [('/', b'Know your'), ('/stats/', b'Every layer'), ('/stats', b'/stats/app.js'),
+        for path, text in [('/', b'id="run"'), ('/stats/', b'Stats for Nerds'), ('/stats', b'/stats/app.js'),
                            ('/bench/app.js', b'/api/runs'), ('/shared/session.mjs', b'rememberRun')]:
             with request(path) as response: assert text in response.read()
         with request('/api/v1/results?limit=1&offset=0') as response:

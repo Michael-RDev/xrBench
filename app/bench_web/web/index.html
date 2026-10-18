@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="Understand every layer on your XR headset. One click, 63 native benchmarks, local results.">
-  <title>xrBench — Know your headset.</title>
+  <meta name="description" content="Help build an open source XR kernel community for standalone headsets and smart glasses. Working toward faster, more efficient on-device compute for XR apps.">
+  <title>xrBench — Better XR. Built together.</title>
   <link rel="stylesheet" href="/bench/style.css"><script type="module" src="/bench/app.js"></script>
 </head>
 <body>
@@ -12,9 +12,10 @@
 <main id="main" class="shell" tabindex="-1">
   <section class="hero" aria-labelledby="hero-title">
     <div class="hero-copy">
-      <p class="eyebrow">Built for what comes next.</p><h1 id="hero-title">Know your<br>headset.<br><span>Layer by layer.</span></h1><p class="lede">Better XR starts with better kernels.<br>Find out how your headset handles the building blocks of vision and AI.</p>
+      <h1 id="hero-title">Better XR.<br>Built<br><span>together.</span></h1><p class="lede">Help build an open source XR kernel community for standalone headsets and smart glasses. Together, we’re working toward faster, more efficient on-device compute for XR apps.</p>
       <div class="hero-actions">
         <button id="run" class="primary" aria-label="Run all tests" disabled><span id="run-label">Run</span><span aria-hidden="true">↗</span></button>
+        <button class="text-action" type="button" popovertarget="supported-devices">See supported devices</button>
         <p id="run-status" class="run-status" role="status" hidden></p>
         <div id="notice" class="notice" role="status" hidden><span id="notice-message"></span> <a id="help-link" href="/stats/">Open Stats for Nerds ↗</a></div>
       </div>
@@ -45,5 +46,11 @@
     <p class="results-footnote">Median and p95 include input staging, native Vulkan execution, and output copying. GPU time, when available, sums operation timestamps. Results stay local.</p>
   </section>
 </main>
+<div id="supported-devices" class="supported-devices" popover role="dialog" aria-labelledby="supported-devices-title">
+  <div class="supported-devices-heading"><h2 id="supported-devices-title">Supported devices</h2><button type="button" popovertarget="supported-devices" popovertargetaction="hide" aria-label="Close supported devices">×</button></div>
+  <p>Available in this version</p>
+  <ul><li>Meta Quest 3 <span>Standalone headset</span></li></ul>
+  <p>Other XR devices are not supported yet.</p>
+</div>
 
 </body></html>

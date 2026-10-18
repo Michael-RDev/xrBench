@@ -15,8 +15,7 @@ export function deviceView(status,serviceError=''){
   if(quests.length>1 || (!quests.length&&devices.length>1))return {...view,kind:'multiple',
     label:'Multiple devices detected',help:'Choose a headset in Stats for Nerds.'};
   const device=quests[0] || devices[0];
-  if(!device)return {...view,kind:'absent',label:'Connect your headset',
-    help:'Connect Quest 3 by USB, enable developer mode, and allow USB debugging in the headset.'};
+  if(!device)return {...view,kind:'absent',label:'Connect XR device',help:''};
   const key=modelKey(device.model),base={...view,serial:device.serial,modelKey:key};
   if(device.state==='offline')return {...base,kind:'offline',label:'Headset is offline',
     help:device.reason || 'Reconnect the USB cable and wake your headset.'};

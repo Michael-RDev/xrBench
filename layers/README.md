@@ -1,7 +1,6 @@
 # Shared native layer benchmarks
 
-Connect Quest 3 by USB, open the local website, and press **Run all
-tests**. All 63 cases across 25 layer types run automatically, in catalog order.
+Connect Quest 3 by USB, open the local website, and press **Run**. Homepage Run executes all 63 cases across 25 layer types in catalog order; Stats for Nerds can select whole operations.
 The website controls a dedicated Android app. Every supported layer executes in
 ExecuTorch's Vulkan backend on the headset; the browser uses graphics only for its optional Three.js presentation.
 The native app also offers a 72 Hz OpenXR scene for paired rendering-impact tests.
@@ -17,7 +16,8 @@ preserve deterministic fixtures.
 parameters. `__init__.py` dispatches to the layer scripts and handles shared input
 generation, correctness checks, and source revisions. `_shared.py` only registers
 PyTorch buffers. The scripts define workloads exported to stock ExecuTorch/Vulkan;
-they are not custom native kernel implementations.
+they are not custom native kernel implementations. Candidate GLSL implementations live separately in
+[`kernels/`](../kernels/README.md), which documents the headset-to-computer development loop.
 
 | Layer folder / script | Cases |
 | --- | ---: |
@@ -54,7 +54,7 @@ repository; the scene and tracing sources are contained in the engine itself.
 Unity integration is separate.
 
 After editing a layer script, rerun the exporter and APK build below. Layer script
-changes invalidate the bundle revision. Every preset still runs the full catalog.
+changes invalidate the bundle revision. Every preset runs all cases in the resolved operation selection.
 
 ## Start the website
 
@@ -174,7 +174,7 @@ to FP32. Both export and device execution check output correctness.
 | Standard | 20 warmups, 100 samples per case | 4 pairs, 15 seconds per window |
 | Sustained | 20 warmups per case, then all cases round-robin at 10 Hz for 10 minutes | 4 pairs, 75 seconds per window |
 
-Every preset includes the complete catalog. Unsupported cases and case failures
+The default selection includes the complete catalog. Unsupported cases and case failures
 are recorded individually before proceeding to the next case. Cancellation,
 severe thermal conditions, XR focus loss, and other session failures stop the run
 and preserve completed results and partial evidence.
@@ -186,10 +186,21 @@ plus setup and warmups. The dashboard shows this estimate. Native runs use a
 host-independent deadline of `max(30 minutes, 125% of planned XR window time +
 5 minutes)`, checked between work units; isolation retains its 30-minute limit.
 
-`POST /api/runs` accepts only `serial`, `mode`, and `preset` (all optional when a
-single headset is connected). The controller resolves the full ordered `cases`
-list internally; public `cases` or `operations` filters are rejected. Saved
-reports retain their resolved case lists, including older partial-suite reports.
+`POST /api/runs` accepts optional `serial`, `mode`, `preset`, `operations` and
+`calibration` (`auto` or `refresh`). Omitting operations retains the full suite.
+Explicit operation arrays must contain known, unique identifiers; empty selections
+and raw case filters are rejected. The controller and Android runner retain catalog
+case order, and every report records the resolved operations and exact case list.
+
+`POST /api/watch` accepts `action` (`enable`, `heartbeat`, `disable`), a page-local
+32-hex `owner`, and the same serial/mode/preset/operations selection. One server
+lease owns each device, renewed every 10 seconds and expired after 30. Scheduling
+attempts are deduplicated by server generation, APK/suite/runtime/runner identity,
+device, mode, preset and resolved cases. Polling, USB authorization, reconnection,
+and failed attempts never create a new key. Manual runs satisfy their key. A server
+restart creates a new generation but recovers active native jobs before scheduling.
+`GET /api/status` includes build identity, generation, leases and known calibration
+profiles. Disabling a watch does not cancel a run; Stop disables it and cancels.
 
 Progress includes the current case, one-based index, and completed/total case
 counts. Reports can be downloaded while running as well as after completion.
@@ -209,17 +220,19 @@ recorded explicitly and never silently benchmarked on CPU. These synthetic
 layer tests characterize this native backend, not Unity scheduling overhead or
 end-to-end model performance.
 
-### Website views
+### Dashboard
 
-- **Benchmark:** automatic device discovery, one-click full-suite execution,
-  live case counts, Stop, JSON downloads, and database retry. Advanced contains
-  mode/preset controls; a headset selector appears only for multiple devices.
-- **Layers:** all cases grouped by operation, with search/status filters that
-  never change the run queue. Expand a case for shapes, correctness before/after,
-  timing scopes, sample counts, unsupported reasons, and thermal/focus flags.
-- **Runs:** local jobs plus paginated PostgreSQL history, including reports whose
-  controller job files are no longer present. Compare two finished reports by
-  case, phase, and trial. Invalid or incompatible timing differences are withheld.
+Stats for Nerds is one compact page: controls, live progress, exclusive session
+timings, correctness ranking, calibration-relative efficiency ranking, then
+expandable operation evidence. History and comparison sections are collapsed below.
+`#benchmark`, `#layers`, and `#runs` remain valid section links. Search/outcome
+filters affect displayed results; the Operations field changes the execution queue.
+See the [viewer guide](../app/stats_for_nerds/README.md).
+
+Calibration runs automatically when no compatible profile exists. Failure leaves
+ordinary benchmarking available. Estimates remain unavailable for unsupported cost
+models or incompatible/invalid evidence. See [versioned measurement definitions](engine/MEASUREMENTS.md)
+for the 15-second/64-MiB limits, cache keys, timing boundaries and formulas.
 
 `GET /api/saved?limit=20&offset=0` returns `runs` and `next_offset` (null on the
 last page). Limits are 1–100 and offsets 0–100000. History includes configuration,
@@ -235,7 +248,7 @@ reports remain unchanged; missing provenance displays as “Not recorded.” No
 schema migration or report rewrite is needed when relocating this code. Re-export
 and rebuild after source changes so the packaged suite and APK metadata agree.
 
-Comparisons require matching suite, backend, scope, mode/preset, hardware/driver,
+Comparisons require matching selected cases, suite, backend, scope, mode/preset, hardware/driver,
 OS, precision, and stock variant; XR also requires matching scene settings.
 Each measurement must pass correctness, have valid timings, and match recorded
 thermal/charging states. Missing metrics remain unavailable. Revision differences
@@ -313,3 +326,10 @@ the per-layer script split.
   comparison validity were checked using an isolated synthetic fixture server;
   these fixtures were never submitted to the benchmark database. HTTP report
   download/receipt tests pass independently of the browser.
+
+## Kernel development
+
+Stats for Nerds now offers paired stock/stock and stock/candidate matmul experiments,
+individual dispatch evidence, shader provenance, and a GPU-timestamps-off latency mode.
+See [the kernel workflow](../kernels/README.md) for authoring, building, returning reports,
+and the device validation gates. These additions do not establish an on-device speedup.

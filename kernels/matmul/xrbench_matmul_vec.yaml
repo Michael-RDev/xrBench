@@ -1,0 +1,17 @@
+xrbench_matmul_vec:
+  parameter_names_with_default_values:
+    DTYPE: float
+    STORAGE: texture3d
+    HAS_BIAS: false
+    TILE_M4: 1
+    TILE_K4: 1
+    TILE_N4: 1
+    TILE_M: 2
+  generate_variant_forall:
+    STORAGE:
+    - VALUE: texture3d
+    - VALUE: buffer
+    DTYPE:
+    - VALUE: float
+  shader_variants:
+  - NAME: xrbench_matmul_vec

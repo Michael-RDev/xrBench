@@ -52,7 +52,8 @@ def handler(controller, token):
                 if path=="/api/status":
                     with controller.lock:jobs=[controller.view(k) for k in reversed(list(controller.jobs))]
                     self.respond(200,dict(**controller.device_snapshot,database=controller.database,jobs=jobs,
-                        apk_ready=(controller.build/"apk.json").exists(),catalog=catalog(),suite_revision=revision()));return
+                        apk_ready=(controller.build/"apk.json").exists(),catalog=catalog(),suite_revision=revision(),
+                        **(controller.dashboard_status() if hasattr(controller,'dashboard_status') else {})));return
                 if path in ("/api/saved", "/api/v1/results"):
                     query=parse_qs(urlsplit(self.path).query,keep_blank_values=True)
                     if set(query)-{"limit","offset"} or any(len(v)!=1 for v in query.values()):raise ValueError("Invalid history page")
@@ -100,12 +101,13 @@ def handler(controller, token):
                 if not isinstance(body,dict):raise ValueError("Expected JSON object")
                 path=urlsplit(self.path).path
                 if path=="/api/runs":self.respond(202,controller.create(body));return
+                if path=="/api/watch":self.respond(200,controller.watch_request(body));return
                 parts=path.strip("/").split("/")
                 if len(parts)==4 and parts[:2]==["api","runs"] and RUN_ID.fullmatch(parts[2]):
                     if parts[3]=="stop":self.respond(200,controller.stop(parts[2]));return
                     if parts[3]=="retry":controller.submit(parts[2]);self.respond(200,controller.view(parts[2]));return
                 self.respond(404,dict(error="Not found"))
-            except (ValueError,TypeError):self.respond(400,dict(error="Invalid run request. Every run includes the full suite; only headset, mode, and preset are accepted. Check the headset and APK revision."))
+            except (ValueError,TypeError) as error:self.respond(400,dict(error=str(error) or 'Invalid run or watch request'))
             except FileNotFoundError:self.respond(409,dict(error="Build the native benchmark APK before running."))
             except KeyError:self.respond(404,dict(error="Run not found"))
             except Exception:self.respond(503,dict(error="Could not start the native run. Check ADB and the local service."))

@@ -1,6 +1,8 @@
 #include "trace.h"
 #include "scene.h"
 #include "tensor_validation.h"
+#include "gpu_span.h"
+#include "kernel_variant.h"
 #include <executorch/extension/module/module.h>
 #include <executorch/extension/tensor/tensor.h>
 #include <executorch/runtime/platform/runtime.h>
@@ -17,7 +19,6 @@ using executorch::extension::Module;
 using executorch::extension::make_tensor_ptr;
 using executorch::runtime::EValue;
 // Same inline timestamp switch used by the repository's Vulkan trace patch.
-// Candidate dispatch remains at its untouched stock defaults in the backend.
 #include "timing.h"
 namespace {
 std::string text(JNIEnv* env,jstring value) {
@@ -59,16 +60,25 @@ Json capabilities() {
 struct Session {
   xrgpu::Trace* trace;
   std::unique_ptr<Module> model;
-  double load_ms=0,model_ms=0;
+  double load_ms=0,model_ms=0,timestamp_scale=1;
   Json shape=Json::array();
-  explicit Session(const std::string& path){
+  bool candidate=false,selected=false,detailed=true;
+  explicit Session(const std::string& path,const std::string& variant,bool trace):candidate(variant=="candidate"),detailed(trace){
+    if(variant!="stock"&&variant!="candidate")throw std::runtime_error("Unknown kernel variant");
+    xrbench::candidate_kernel=candidate;xrbench::candidate_selections=0;
     executorch::runtime::runtime_init();
-    xrbench::gpu_timestamps_supported=capabilities()["gpu_timestamps"].get<bool>();
+    auto caps=capabilities();xrbench::gpu_timestamps_supported=detailed&&caps["gpu_timestamps"].get<bool>();
+    // The pinned QueryPool rounds ns/tick to an integer. Correct the new span to
+    // the actual Vulkan period; retain the historical gpu_ms sum unchanged.
+    if(xrbench::gpu_timestamps_supported){double period=caps["timestamp_period_ns"].get<double>();
+      long rounded=std::lround(period);timestamp_scale=period/(rounded?rounded:52);}
     auto t=std::make_unique<xrgpu::Trace>();trace=t.get();
     const double start=xrgpu::milliseconds();
     model=std::make_unique<Module>(path,Module::LoadMode::Mmap,std::move(t));
     if(model->load_forward()!=executorch::runtime::Error::Ok)throw std::runtime_error("Program load failed");
     load_ms=xrgpu::milliseconds()-start;
+    selected=xrbench::candidate_selections>0;
+    if(candidate&&!selected)throw std::runtime_error("Candidate did not select a supported matmul shader");
   }
 };
 Session& session(jlong handle){if(!handle)throw std::runtime_error("Closed model");return *reinterpret_cast<Session*>(handle);}
@@ -76,13 +86,14 @@ Session& session(jlong handle){if(!handle)throw std::runtime_error("Closed model
 extern "C" JNIEXPORT jstring JNICALL Java_org_xrgpu_benchmarks_Native_capabilities(JNIEnv* env,jclass){
   try{return env->NewStringUTF(capabilities().dump().c_str());}catch(const std::exception& e){fail(env,e);return nullptr;}
 }
-extern "C" JNIEXPORT jlong JNICALL Java_org_xrgpu_benchmarks_Native_create(JNIEnv* env,jclass,jstring path){
-  try{return reinterpret_cast<jlong>(new Session(text(env,path)));}catch(const std::exception& e){fail(env,e);return 0;}
+extern "C" JNIEXPORT jlong JNICALL Java_org_xrgpu_benchmarks_Native_create(JNIEnv* env,jclass,jstring path,jstring variant,jboolean detailed){
+  try{return reinterpret_cast<jlong>(new Session(text(env,path),text(env,variant),detailed));}catch(const std::exception& e){fail(env,e);return 0;}
 }
 extern "C" JNIEXPORT void JNICALL Java_org_xrgpu_benchmarks_Native_destroy(JNIEnv*,jclass,jlong handle){delete reinterpret_cast<Session*>(handle);}
 extern "C" JNIEXPORT jfloatArray JNICALL Java_org_xrgpu_benchmarks_Native_infer(JNIEnv* env,jclass,jlong handle,jobjectArray data,jobjectArray dimensions,jobjectArray types){
   try{
     auto& s=session(handle);const auto count=env->GetArrayLength(data);
+    xrbench::candidate_kernel=s.candidate;
     if(count<1||count>8||env->GetArrayLength(dimensions)!=count||env->GetArrayLength(types)!=count)throw std::runtime_error("Invalid input count");
     std::vector<std::vector<int64_t>> integers(count);
     std::vector<std::vector<float>> floats(count);
@@ -119,7 +130,27 @@ extern "C" JNIEXPORT jstring JNICALL Java_org_xrgpu_benchmarks_Native_stats(JNIE
     for(auto& e:s.trace->gpu)gpu=(gpu.is_null()?0.:gpu.get<double>())+e["ms"].get<double>();
     for(auto& e:s.trace->host){auto name=e["name"].get<std::string>();Json* value=name=="ETVK_COPY_INPUTS"?&input:name=="ETVK_COPY_OUTPUTS"?&output:name=="ETVK_COMPUTE_GRAPH_EXECUTE"?&wait:nullptr;
       if(value)*value=(value->is_null()?0.:value->get<double>())+e["ms"].get<double>();}
-    Json stats={{"model_ms",s.model_ms},{"load_ms",s.load_ms},{"gpu_ms",gpu},{"input_staging_ms",input},
+    Json span=nullptr;
+    size_t executions=0;for(auto& e:s.trace->host)if(e["name"]=="ETVK_COMPUTE_GRAPH_EXECUTE")executions++;
+    // In the pinned backend each graph execution owns one Context/queue and query pool.
+    // Multiple delegated graphs are not assumed to share a clock/queue.
+    xrgpu::GpuSpan spanEvents;
+    for(auto& e:s.trace->gpu)spanEvents.add(e["start_ns"].get<uint64_t>(),e["end_ns"].get<uint64_t>());
+    if(auto value=spanEvents.finish(executions,s.trace->invalid_gpu_timestamp,s.timestamp_scale))span=*value;
+    Json dispatches=Json::array();
+    for(auto e:s.trace->gpu){
+      e["raw_start_ns"]=e["start_ns"];e["raw_end_ns"]=e["end_ns"];
+      e["start_ns"]=e["start_ns"].get<double>()*s.timestamp_scale;
+      e["end_ns"]=e["end_ns"].get<double>()*s.timestamp_scale;
+      e["ms"]=e["ms"].get<double>()*s.timestamp_scale;
+      dispatches.push_back(e);
+    }
+    Json stats={{"model_ms",s.model_ms},{"load_ms",s.load_ms},{"gpu_ms",gpu},{"gpu_span_ms",span},
+      {"dispatches",dispatches},{"timestamp_scale",s.timestamp_scale},
+      {"kernel_variant",s.candidate?"candidate":"stock"},{"candidate_selected",s.selected},
+      {"profiling",s.detailed?"trace":"latency"},
+      {"gpu_span_scope",span.is_null()?"unavailable":"single graph, common queue timestamp domain"},
+      {"dispatch_count",s.trace->gpu.empty()?Json(nullptr):Json(s.trace->gpu.size())},{"input_staging_ms",input},
       {"output_staging_ms",output},{"submit_and_wait_ms",wait},{"output_shape",s.shape}};
     return env->NewStringUTF(stats.dump().c_str());
   }catch(const std::exception& e){fail(env,e);return nullptr;}

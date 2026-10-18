@@ -24,7 +24,10 @@ def build_environment(toolchain, pins):
                ANDROID_USER_HOME=str(STATE / "android"), GRADLE_USER_HOME=str(STATE / "gradle"))
     if not env.get("JAVA_HOME"):
         java = shutil.which("java")
-        if java:
+        if sys.platform == "darwin" and Path("/usr/libexec/java_home").exists():
+            # /usr/bin/java is a launcher stub, not a JDK rooted at /usr.
+            env["JAVA_HOME"] = subprocess.check_output(["/usr/libexec/java_home"], text=True).strip()
+        elif java:
             env["JAVA_HOME"] = str(Path(java).resolve().parent.parent)
         elif os.name == "nt":
             editors = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Unity/Hub/Editor"
@@ -34,8 +37,6 @@ def build_environment(toolchain, pins):
                 if (jdk / "bin/javac.exe").is_file():
                     env["JAVA_HOME"] = str(jdk)
                     break
-        elif Path("/usr/libexec/java_home").exists():
-            env["JAVA_HOME"] = subprocess.check_output(["/usr/libexec/java_home"], text=True).strip()
     if not env.get("JAVA_HOME"):
         raise RuntimeError("JDK 17+ required. Set JAVA_HOME to an installed JDK (Unity's OpenJDK is supported).")
     if not (ndk / "build/cmake/android.toolchain.cmake").is_file():
@@ -49,8 +50,10 @@ def build_environment(toolchain, pins):
 
 def build(jobs=4):
     from layers.engine.prepare import verify
+    from layers.engine import kernels
     verify()
     build_dir = BUILD
+    kernels.prepare_sources(build_dir / "candidate_sources")
     pins = json.loads((ROOT / "dependencies.json").read_text())
     for dep in ("executorch", "openxr"):
         actual = subprocess.check_output(["git", "-C", str(ROOT / "artifacts/deps" / dep), "rev-parse", "HEAD"], text=True).strip()
@@ -62,12 +65,20 @@ def build(jobs=4):
     manifest = json.loads((bundle / "manifest.json").read_text())
     if manifest["suite_revision"] != revision():
         raise RuntimeError("Layer source changed; rerun uv run --extra export --group dev python -m layers.export")
-    source_paths = sorted((BASE / "native").glob("*")) + sorted((BASE / "android").rglob("*.java"))
+    source_paths = sorted((BASE / "native").rglob("*")) + sorted((BASE / "android").rglob("*.java"))
     source_paths += [BASE / "prepare.py", BASE / "build.py", ROOT / "dependencies.json"] + sorted((BASE / "patches").glob("*.patch"))
+    source_paths += [BASE / "kernel_hooks.py", BASE / "kernels.py"] + sorted(kernels.KERNELS.rglob("*.glsl")) + sorted(kernels.KERNELS.rglob("*.yaml"))
+    source_paths += sorted(kernels.KERNELS.rglob("*.json")) + sorted(kernels.KERNELS.rglob("*.glslh"))
     identity = hashlib.sha256(b"".join(p.read_bytes() for p in source_paths if p.is_file())).hexdigest()
     dest = build_dir / "lib/arm64-v8a"
     dest.mkdir(parents=True, exist_ok=True)
     native = build_dir / "native"
+    generator = "Ninja"
+    cache = native / "CMakeCache.txt"
+    if cache.exists():
+        match = re.search(r"^CMAKE_GENERATOR:INTERNAL=(.+)$", cache.read_text(), re.MULTILINE)
+        if match:
+            generator = match.group(1)
     cmake = shutil.which("cmake", path=env["PATH"])
     if not cmake or not shutil.which("ninja", path=env["PATH"]):
         raise RuntimeError("CMake and Ninja required. Run uv sync --extra export --group dev first.")
@@ -75,11 +86,12 @@ def build(jobs=4):
     if not glslc:
         raise RuntimeError("Shaderc required. Run python -m layers.engine.bootstrap_shaderc first.")
     run([cmake, "-S", BASE / "native", "-B", native,
-         "-G", "Ninja", f"-DPYTHON_EXECUTABLE={Path(sys.executable).as_posix()}", f"-DGLSLC_PATH={Path(glslc).as_posix()}",
+         "-G", generator, f"-DPYTHON_EXECUTABLE={Path(sys.executable).as_posix()}", f"-DGLSLC_PATH={Path(glslc).as_posix()}",
          f"-DCMAKE_TOOLCHAIN_FILE={ndk}/build/cmake/android.toolchain.cmake", "-DANDROID_ABI=arm64-v8a",
          "-DANDROID_PLATFORM=android-29", "-DANDROID_STL=c++_shared", "-DCMAKE_BUILD_TYPE=Release",
          f'-DXRGPU_ET_REVISION={pins["executorch"]["commit"]}', f"-DXRGPU_RUNNER_REVISION={identity}"], env=env)
     run([cmake, "--build", native, "--target", "xrgpu_benchmarks", "-j", jobs], env=env)
+    kernel_manifest = kernels.manifest(native, glslc)
     shutil.copy2(native / "libxrgpu_benchmarks.so", dest)
     loader = next(native.rglob("libopenxr_loader.so"))
     shutil.copy2(loader, dest / "libopenxr_loader.so")
@@ -89,6 +101,7 @@ def build(jobs=4):
     assets.mkdir(parents=True, exist_ok=True)
     for name in ["manifest.json", *manifest["files"]]:
         shutil.copy2(bundle / name, assets / name)
+    save(build_dir / "assets/kernel-manifest.json", kernel_manifest)
     shutil.copytree(ROOT / "licenses", build_dir / "assets/licenses", dirs_exist_ok=True)
     shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", build_dir / "assets")
     STATE.mkdir(exist_ok=True)
@@ -107,7 +120,8 @@ def build(jobs=4):
     apk = build_dir / "xrgpu-benchmarks.apk"
     shutil.copy2(BASE / "android/app/build/outputs/apk/debug/app-debug.apk", apk)
     metadata = dict(apk_sha256=hashlib.sha256(apk.read_bytes()).hexdigest(), suite_revision=revision(),
-                    runner_revision=identity, runtime_revision=pins["executorch"]["commit"], package="org.xrgpu.benchmarks")
+                    runner_revision=identity, runtime_revision=pins["executorch"]["commit"], package="org.xrgpu.benchmarks",
+                    kernel_experiments_version=1, candidate_revision=kernels.source_identity())
     save(build_dir / "apk.json", metadata)
     print(f"Native benchmark APK: {apk}")
 

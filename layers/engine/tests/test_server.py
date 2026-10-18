@@ -63,7 +63,7 @@ def test_http_create_stop_recovery_and_report_download(tmp_path,report):
         with urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{server.server_port}"+path,headers=headers,data=data),timeout=3) as response:
             return json.load(response)
     try:
-        for subset in ({"cases":["linear_odd"]},{"operations":["linear"]}):
+        for subset in ({"cases":["linear_odd"]},{"operations":["unknown"]}):
             with pytest.raises(urllib.error.HTTPError) as error:request("/api/runs",subset)
             assert error.value.code==400
         assert not controller.jobs

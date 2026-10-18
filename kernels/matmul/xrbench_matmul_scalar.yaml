@@ -1,0 +1,16 @@
+xrbench_matmul_scalar:
+  parameter_names_with_default_values:
+    DTYPE: float
+    STORAGE: buffer
+    HAS_BIAS: false
+    TILE_M4: 1
+    TILE_K4: 1
+    TILE_N4: 1
+    TILE_M: 2
+  generate_variant_forall:
+    STORAGE:
+    - VALUE: buffer
+    DTYPE:
+    - VALUE: float
+  shader_variants:
+  - NAME: xrbench_matmul

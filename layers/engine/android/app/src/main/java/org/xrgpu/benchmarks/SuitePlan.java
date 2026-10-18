@@ -18,9 +18,14 @@ public final class SuitePlan {
     public final boolean xr;
     public SuitePlan(JSONArray cases,JSONArray requested,String preset,boolean xr) throws Exception {
         if(!preset.equals("smoke")&&!preset.equals("standard")&&!preset.equals("sustained"))throw new IllegalArgumentException("Unknown preset");
-        if(cases.length()==0||requested.length()!=cases.length())throw new IllegalArgumentException("Run requires the complete layer catalog");
-        for(int i=0;i<cases.length();i++)if(!requested.getString(i).equals(cases.getJSONObject(i).getString("id")))throw new IllegalArgumentException("Run requires catalog order without duplicates");
-        this.cases=cases;this.preset=preset;this.xr=xr;
+        if(cases.length()==0||requested.length()==0)throw new IllegalArgumentException("Select at least one catalog case");
+        JSONArray selected=new JSONArray();int next=0;
+        for(int i=0;i<cases.length()&&next<requested.length();i++){
+            JSONObject spec=cases.getJSONObject(i);
+            if(requested.getString(next).equals(spec.getString("id"))){selected.put(spec);next++;}
+        }
+        if(next!=requested.length())throw new IllegalArgumentException("Run requires known cases in catalog order without duplicates");
+        this.cases=selected;this.preset=preset;this.xr=xr;
     }
     public int warmups(){return preset.equals("smoke")?5:20;}
     public int samples(){return preset.equals("smoke")?20:100;}

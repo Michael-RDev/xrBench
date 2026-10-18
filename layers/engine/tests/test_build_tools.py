@@ -79,3 +79,18 @@ def test_windows_build_reuses_highest_installed_unity_jdk(tmp_path, monkeypatch)
     marker.touch()
     _, _, env = build_environment(tmp_path, {"android": {"ndk": "test"}})
     assert "6000.10.1f1" in env["JAVA_HOME"]
+
+
+def test_macos_jdk_discovery_uses_java_home_instead_of_launcher_stub(tmp_path, monkeypatch):
+    monkeypatch.delenv('JAVA_HOME',raising=False)
+    monkeypatch.delenv('ANDROID_HOME',raising=False)
+    monkeypatch.delenv('ANDROID_NDK',raising=False)
+    monkeypatch.setattr('layers.engine.build.sys.platform','darwin')
+    monkeypatch.setattr('layers.engine.build.shutil.which',lambda _: '/usr/bin/java')
+    original=Path.exists
+    monkeypatch.setattr(Path,'exists',lambda path:True if str(path)=='/usr/libexec/java_home' else original(path))
+    monkeypatch.setattr('layers.engine.build.subprocess.check_output',lambda *args,**kwargs:'/Library/Java/TestJDK/Contents/Home\n')
+    marker=tmp_path/'android-sdk/ndk/test/build/cmake/android.toolchain.cmake'
+    marker.parent.mkdir(parents=True);marker.touch()
+    _,_,env=build_environment(tmp_path,{'android':{'ndk':'test'}})
+    assert env['JAVA_HOME']=='/Library/Java/TestJDK/Contents/Home'

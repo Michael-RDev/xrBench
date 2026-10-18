@@ -68,3 +68,19 @@ def test_atomic_write_keeps_previous_report_on_failure(report,tmp_path,monkeypat
     monkeypatch.setattr(Path,"replace",fail)
     with pytest.raises(OSError):save(path,{"replacement":True})
     assert json.loads(path.read_text())==report
+
+
+def test_optional_diagnostics_are_accounted_and_legacy_reports_remain_valid(report):
+    validate(report)
+    report['diagnostics']=dict(version=1,session_ms=10,stages_ms=dict(preparation=2,measurement=7,validation=1))
+    validate(report)
+    report['diagnostics']['stages_ms']['measurement']=8
+    with pytest.raises(ValueError,match='account'):validate(report)
+
+
+@pytest.mark.parametrize('key,value',[('wall_ms',15001),('scratch_bytes',64*1024*1024+1),('compute_gflops',0)])
+def test_calibration_limits_are_validated(report,key,value):
+    report['calibration']=dict(version=1,available=True,wall_ms=1000,scratch_bytes=32*1024*1024,compute_gflops=10,memory_gbps=1,dispatch_ms=.02)
+    validate(report)
+    report['calibration'][key]=value
+    with pytest.raises(ValueError,match='calibration'):validate(report)

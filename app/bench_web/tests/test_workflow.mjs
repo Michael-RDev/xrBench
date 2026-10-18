@@ -20,7 +20,10 @@ async function page(kind,report=null,stateOverrides={},sceneMode='unavailable'){
   const pretty=kind==='bench';
   const html=await readFile(new URL(`app/${pretty?'bench_web':'stats_for_nerds'}/web/index.html`,root),'utf8');
   const dom=new JSDOM(html,{url:'http://localhost:8765/'+(pretty?'':'stats/')+(report?'?run='+id:''),runScripts:'outside-only'});
-  const window=dom.window,calls=[],intervals=[],faults={start:false,status:false};
+  const window=dom.window,calls=[],intervals=[],faults={start:false,status:false},downloads=[];
+  let hidden=false;Object.defineProperty(window.document,'hidden',{get:()=>hidden});
+  window.Blob=Blob;window.URL.createObjectURL=blob=>{downloads.push(blob);return 'blob:fixture';};window.URL.revokeObjectURL=()=>{};
+  window.document.addEventListener('click',e=>{if(e.target.closest('a[download]'))e.preventDefault();});
   const state={devices:[{serial:'fixture',model:'Quest 3',state:'device',supported:true}],database:{ready:true,message:'Local PostgreSQL ready'},jobs:[],apk_ready:true,catalog,suite_revision:'fixture-suite',...stateOverrides};
   window.fetch=async(path,options={})=>{
     const body=options.body?JSON.parse(options.body):null;
@@ -31,9 +34,12 @@ async function page(kind,report=null,stateOverrides={},sceneMode='unavailable'){
     else if(path==='/api/status')value=structuredClone(state);
     else if(path.startsWith('/api/saved'))value={runs:[],next_offset:null};
     else if(path==='/api/runs'&&body){
-      assert.deepEqual(Object.keys(body).sort(),['mode','preset','serial']);
-      value={run_id:id,status:'running',configuration:{...body,cases:catalog.cases.map(c=>c.id)},message:'Test 1 of 63',storage:'pending'};
+      assert.deepEqual(Object.keys(body).filter(k=>!['experiment','profiling'].includes(k)).sort(),pretty?['mode','preset','serial']:['calibration','mode','operations','preset','serial']);
+      value={run_id:id,status:'running',configuration:{...body,cases:catalog.cases.filter(c=>!body.operations||body.operations.includes(c.operation)).map(c=>c.id)},message:'Test 1 of 63',storage:'pending'};
       state.jobs=[value];
+    }else if(path==='/api/watch'){
+      if(faults.watchGate&&body.action==='enable')await faults.watchGate;
+      state.watch_status=body.action==='disable'?[]:[{owner:body.owner,serial:body.serial,state:'Watching for changes',run_id:null}];value=state.watch_status;
     }else if(path.endsWith('/stop')){state.jobs[0].cancel_requested=true;value=state.jobs[0];}
     else if(path.endsWith('/report'))value=report;
     else throw Error('Unexpected API request '+path);
@@ -66,7 +72,7 @@ async function page(kind,report=null,stateOverrides={},sceneMode='unavailable'){
     return mod;
   }
   await (await module(pretty?'/bench/app.js':'/stats/app.js')).evaluate();await drain();
-  return {window,state,calls,faults,viewer,releaseScene:async()=>{releaseScene();await drain();},
+  return {window,state,calls,faults,viewer,downloads,setHidden:async value=>{hidden=value;window.document.dispatchEvent(new window.Event('visibilitychange'));await drain();},releaseScene:async()=>{releaseScene();await drain();},
     setReport:value=>{report=value;},
     close:()=>window.close(),tick:async()=>{for(const callback of intervals)await callback();await drain();}};
 }
@@ -112,6 +118,40 @@ test('Run beneath the description starts the full suite once, preserves selectio
     assert.equal(doc.querySelector('#run-phase').textContent,'Run stopped');
     assert.equal(doc.querySelector('#run').disabled,false);
     assert.equal(doc.querySelector('#run-label').textContent,'Run');
+  }finally{p.close();}
+});
+
+test('kernel experiment selects matmul, disables unattended runs, and submits the profiling scope',async()=>{
+  const p=await page('stats');
+  try{
+    const doc=p.window.document;
+    doc.querySelector('#experiment').value='candidate';doc.querySelector('#experiment').dispatchEvent(new p.window.Event('change'));await drain();
+    assert.equal(doc.querySelector('#operations').value,'matmul');
+    assert.equal(doc.querySelector('#continuous').disabled,true);
+    doc.querySelector('#profiling').value='latency';doc.querySelector('#profiling').dispatchEvent(new p.window.Event('change'));await drain();
+    doc.querySelector('#run').click();await drain();
+    const request=p.calls.find(c=>c.path==='/api/runs'&&c.body).body;
+    assert.equal(request.experiment,'candidate');assert.equal(request.profiling,'latency');
+    assert.deepEqual(request.operations,['matmul']);
+    assert.equal(p.state.jobs[0].configuration.cases.length,2);
+    assert.equal(doc.querySelector('#experiment').disabled,true);
+  }finally{p.close();}
+});
+
+test('returned kernel evidence shows source-level dispatch detail and paired intervals',async()=>{
+  const report={run_id:id,status:'complete',suite_revision:'fixture-suite',configuration:{cases:['matmul_odd'],preset:'smoke'},
+    device:{model:'Quest fixture'},experiment:{kind:'candidate'},
+    kernel_comparison:{note:'Exploratory',results:[{case:'matmul_odd',available:true,pairs:6,outcome:'improvement_observed',metrics:{execution_ms:{mean_improvement_percent:12,ci95_percent:[8,16],mean_p95_change_percent:-10}}}]},
+    results:[{case:'matmul_odd',operation:'matmul',variant:'candidate',phase:'isolated',trial:1,arm:'comparison',status:'passed',samples:[{execution_ms:1}],
+      dispatch_summary:[{kernel_name:'xrbench_matmul_buffer_float',dispatch_id:1,local_size:[8,8,1],global_size:[5,4,1],complete:true,timing:{median:.2,p95:.3},shader:{source:'kernels/matmul/xrbench_matmul_scalar.glsl'}}]}]};
+  const p=await page('stats',report);
+  try{
+    const doc=p.window.document;
+    assert.match(doc.querySelector('#kernel-results').textContent,/12.00%/);
+    assert.match(doc.querySelector('#kernel-results').textContent,/8.00% to 16.00%/);
+    const detail=doc.querySelector('#case-matmul_odd');detail.open=true;detail.dispatchEvent(new p.window.Event('toggle'));await drain();
+    assert.match(detail.textContent,/xrbench_matmul_buffer_float/);
+    assert.match(detail.textContent,/kernels\/matmul\/xrbench_matmul_scalar.glsl/);
   }finally{p.close();}
 });
 
@@ -256,7 +296,7 @@ test('device status drives the model and controls through connection changes',as
   try{
     const doc=p.window.document,device={serial:'quest',model:'Quest 3',state:'unauthorized',supported:false};
     assert.equal(doc.querySelector('#scene').hidden,true);
-    assert.equal(doc.querySelector('#device-name').textContent,'Connect your headset');
+    assert.equal(doc.querySelector('#device-name').textContent,'Connect XR device');
     p.state.devices=[device];await p.tick();
     assert.equal(doc.querySelector('#scene').hidden,false);
     assert.match(doc.querySelector('#device-help').textContent,/allow USB debugging/);
@@ -274,7 +314,7 @@ test('device status drives the model and controls through connection changes',as
     assert.equal(doc.querySelector('#scene').hidden,false);
     device.state='offline';await p.tick();assert.equal(doc.querySelector('#scene').hidden,true);
     p.state.devices=[];await p.tick();
-    assert.equal(doc.querySelector('#device-name').textContent,'Connect your headset');
+    assert.equal(doc.querySelector('#device-name').textContent,'Connect XR device');
     assert.equal(doc.querySelector('#viewer-controls').hidden,true);
     assert.equal(p.calls.filter(c=>c.body).length,0);
     p.window.dispatchEvent(new p.window.Event('pagehide'));assert.equal(p.viewer.disposed,1);
@@ -320,5 +360,75 @@ test('unsupported and ambiguous devices never show the Quest 3 preview; missing 
     assert.equal(doc.querySelector('#scene-fallback').hidden,false);
     assert.equal(doc.querySelector('#viewer-controls').hidden,true);
     doc.querySelector('#run').click();await drain();assert.equal(p.state.jobs.length,1);
+  }finally{p.close();}
+});
+
+
+test('stats operation selection rejects unknown patterns and sends exact subsets with refresh policy',async()=>{
+  const p=await page('stats');
+  try{
+    const doc=p.window.document,input=doc.querySelector('#operations');
+    input.value='unknown*';input.dispatchEvent(new p.window.Event('input'));
+    assert.equal(doc.querySelector('#run').disabled,true);assert.equal(input.getAttribute('aria-invalid'),'true');
+    input.value='matmul, linear';input.dispatchEvent(new p.window.Event('input'));
+    assert.match(doc.querySelector('#suite-summary').textContent,/2 operations · 12 cases/);
+    doc.querySelector('#recalibrate').click();await drain();
+    const request=p.calls.find(c=>c.path==='/api/runs'&&c.body).body;
+    assert.deepEqual(request.operations,['linear','matmul']);assert.equal(request.calibration,'refresh');
+    assert.equal(p.state.jobs[0].configuration.cases.length,12);
+  }finally{p.close();}
+});
+
+test('continuous mode is explicit, heartbeats while visible, releases on hide, and stops without duplicate run requests',async()=>{
+  const p=await page('stats');
+  try{
+    const doc=p.window.document;
+    assert.equal(p.calls.filter(c=>c.path==='/api/watch').length,0);
+    doc.querySelector('#continuous').click();await drain();await p.tick();
+    assert.deepEqual(p.calls.filter(c=>c.path==='/api/watch').map(c=>c.body.action),['enable','heartbeat']);
+    await p.setHidden(true);assert.equal(p.calls.at(-1).body.action,'disable');
+    await p.setHidden(false);assert.equal(p.calls.at(-1).body.action,'enable');
+    doc.querySelector('#stop').click();await drain();
+    assert.equal(doc.querySelector('#continuous').getAttribute('aria-pressed'),'false');
+    assert.equal(p.calls.filter(c=>c.path==='/api/runs'&&c.body).length,0);
+  }finally{p.close();}
+});
+
+test('hiding during an in-flight enable releases the resulting lease',async()=>{
+  const p=await page('stats');
+  try{
+    let release;p.faults.watchGate=new Promise(resolve=>{release=resolve;});
+    p.window.document.querySelector('#continuous').click();await drain();
+    await p.setHidden(true);release();await drain();
+    assert.deepEqual(p.calls.filter(c=>c.path==='/api/watch').map(c=>c.body.action),['enable','disable']);
+  }finally{p.close();}
+});
+
+test('stats live rankings preserve evidence expansion, focus, filters and table scroll; diagnostics omit private identity',async()=>{
+  const selected=catalog.cases.slice(0,2),report={run_id:id,status:'running',suite_revision:'fixture-suite',device:{model:'Synthetic fixture'},
+    configuration:{mode:'isolated',preset:'smoke',cases:selected.map(c=>c.id)},
+    calibration:{version:1,available:true,compute_gflops:100,memory_gbps:10,dispatch_ms:.01,identity:'private-cache-key'},
+    diagnostics:{version:1,session_ms:30,stages_ms:{preparation:10,measurement:18,validation:2}},
+    results:selected.map((c,i)=>({...c,case:c.id,phase:'isolated',trial:0,status:'passed',timing_valid:true,correctness:{passed:true},
+      samples:[{execution_ms:i+1,gpu_ms:.2}],validation_observations:[{total_ms:i+1,inference_ms:.5,comparison_ms:.1,passed:true}],
+      efficiency:{available:false,reason:'Common-queue GPU span unavailable'}}))};
+  const p=await page('stats',report,{jobs:[{run_id:id,status:'running',report_available:true,report_revision:'one',configuration:report.configuration,diagnostics:{transfer_ms:12,hostname:'private-host'}}]});
+  try{
+    const doc=p.window.document;
+    assert.match(doc.querySelector('#correctness-ranking tbody tr').textContent,new RegExp(selected[1].id));
+    const sort=[...doc.querySelectorAll('#correctness-ranking th button')].find(e=>e.textContent.includes('Validation'));
+    sort.click();assert.match(doc.querySelector('#correctness-ranking tbody tr').textContent,new RegExp(selected[0].id));
+    doc.querySelector('#correctness-ranking .case-link').click();await drain();
+    assert.equal(p.window.location.hash,'#layers');assert.equal(doc.querySelector('.case').open,true);assert.equal(doc.querySelector('.operation-group').open,true);
+    const raw=doc.querySelector('.raw-details');raw.open=true;await drain();raw.querySelector('summary').focus();
+    const scroll=doc.querySelector('.case .table-scroll');scroll.scrollLeft=123;
+    p.state.jobs[0].report_revision='two';report.results[0].samples.push({execution_ms:2,gpu_ms:.3});await p.tick();
+    assert.equal(doc.querySelector('.operation-group').open,true);assert.equal(doc.querySelector('.case').open,true);assert.equal(doc.querySelector('.raw-details').open,true);
+    assert.equal(doc.activeElement.dataset.focusKey,'raw:'+selected[0].id+':isolated:0');
+    assert.equal(doc.querySelector('.case .table-scroll').scrollLeft,123);assert.equal(doc.querySelector('#layer-search').value,selected[0].id);
+    doc.querySelector('#download').click();await drain();const downloaded=JSON.parse(await p.downloads[0].text());
+    assert.equal(downloaded.calibration.identity,undefined);assert.equal(downloaded.controller_diagnostics.hostname,undefined);
+    assert.equal(downloaded.controller_diagnostics.transfer_ms,12);assert.ok(downloaded.timing_definitions.gpu_span_ms);
+    p.window.location.hash='runs';await drain();assert.equal(doc.querySelector('#runs').open,true);
   }finally{p.close();}
 });

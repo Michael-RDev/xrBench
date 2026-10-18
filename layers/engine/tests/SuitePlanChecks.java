@@ -43,7 +43,9 @@ public final class SuitePlanChecks {
             }catch(InterruptedException|SuitePlan.SessionFailure expected){require(visited.size()==3);}
         }
         boolean rejected=false;
-        try{new SuitePlan(cases,new JSONArray().put(ids.getString(0)),"smoke",false);}catch(IllegalArgumentException expected){rejected=true;}
+        SuitePlan subset=new SuitePlan(cases,new JSONArray().put(ids.getString(0)).put(ids.getString(3)),"smoke",false);
+        require(subset.cases.length()==2&&subset.cases.getJSONObject(1).getString("id").equals(ids.getString(3)));
+        try{new SuitePlan(cases,new JSONArray(),"smoke",false);}catch(IllegalArgumentException expected){rejected=true;}
         require(rejected);JSONArray reordered=new JSONArray(ids.toString());reordered.put(1,ids.getString(0));rejected=false;
         try{new SuitePlan(cases,reordered,"smoke",false);}catch(IllegalArgumentException expected){rejected=true;}
         require(rejected);

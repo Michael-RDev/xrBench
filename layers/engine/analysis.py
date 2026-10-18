@@ -3,7 +3,7 @@ import copy
 from layers.engine.reports import TERMINAL, summarize
 
 
-TIMINGS = ("execution_ms", "model_ms", "gpu_ms", "input_staging_ms", "output_staging_ms", "submit_and_wait_ms")
+TIMINGS = ("execution_ms", "model_ms", "gpu_ms", "gpu_span_ms", "input_staging_ms", "output_staging_ms", "submit_and_wait_ms")
 
 
 def metadata(report):
@@ -38,6 +38,14 @@ def compare(baseline, current):
         field(name.replace("_", " ").capitalize(), a.get(name), b.get(name))
     for name in ("mode", "preset"):
         field(name.capitalize(), a.get("configuration", {}).get(name), b.get("configuration", {}).get(name))
+    for name,default in (("profiling","trace"),("experiment","none")):
+        field(name.capitalize(),a.get("configuration",{}).get(name,default),b.get("configuration",{}).get(name,default))
+    if a.get('experiment') or b.get('experiment'):
+        field('Candidate source',a.get('kernel_build',{}).get('candidate_revision'),b.get('kernel_build',{}).get('candidate_revision'))
+        field('Headset installation',a.get('device',{}).get('installation_id'),b.get('device',{}).get('installation_id'))
+    elif a.get('device',{}).get('installation_id') and b.get('device',{}).get('installation_id'):
+        field('Headset installation',a['device']['installation_id'],b['device']['installation_id'])
+    field('Selected cases',a.get('configuration',{}).get('cases'),b.get('configuration',{}).get('cases'))
     for name in ("model", "gpu", "driver", "os", "precision", "variant"):
         field(name.replace("_", " ").capitalize(), a.get("device", {}).get(name), b.get("device", {}).get(name))
     for name in ("runtime_revision", "runner_revision", "apk_sha256"):
@@ -59,6 +67,7 @@ def compare(baseline, current):
             if x.get("operation") != y.get("operation"):issues.append("Operation differs")
             for name in ("inputs", "params", "precision"):
                 if x.get(name) != y.get(name):issues.append(name + " differs")
+            if x.get('variant','stock')!=y.get('variant','stock'):issues.append('Kernel variants differ; use a paired kernel experiment')
             for label, row in (("Baseline", x), ("Comparison", y)):
                 if not row["timing_valid"]:issues.append(label + ": incorrect, incomplete, or thermal/focus transition")
                 if row.get("correctness", {}).get("passed") is not True:
@@ -73,8 +82,12 @@ def compare(baseline, current):
             before = (x or {}).get("timings", {}).get(name)
             after = (y or {}).get("timings", {}).get(name)
             valid = not issues and before is not None and after is not None
+            domain_issue = name == 'gpu_span_ms' and any(
+                sample.get('gpu_span_scope') != 'single graph, common queue timestamp domain'
+                for row in (x or {}, y or {}) for sample in row.get('samples', []))
+            if domain_issue:valid=False
             metrics[name] = dict(baseline=before, current=after, valid=valid,
-                reason="; ".join(issues) if issues else (None if valid else "Timing unavailable or incomplete"),
+                reason="; ".join(issues) if issues else ('GPU timestamp domain not verified' if domain_issue else (None if valid else "Timing unavailable or incomplete")),
                 median_delta_ms=after["median"]-before["median"] if valid else None,
                 p95_delta_ms=after["p95"]-before["p95"] if valid else None,
                 median_change_percent=(after["median"]/before["median"]-1)*100 if valid and before["median"]>0 else None)

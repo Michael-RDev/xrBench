@@ -23,7 +23,8 @@ class Trace final : public executorch::runtime::EventTracer {
   std::vector<HostEvent> host_;
  public:
   Json gpu = Json::array(), host = Json::array(), cpu_delegate = Json::array();
-  void reset() { gpu.clear(); host.clear(); cpu_delegate.clear(); host_.clear(); }
+  bool invalid_gpu_timestamp=false;
+  void reset() { gpu.clear(); host.clear(); cpu_delegate.clear(); host_.clear(); invalid_gpu_timestamp=false; }
   void create_event_block(const char*) override {}
   Entry start_profiling(const char* name, int32_t = -1, uint32_t = 0) override {
     host_.push_back({name ? name : "unnamed", milliseconds()});
@@ -41,13 +42,15 @@ class Trace final : public executorch::runtime::EventTracer {
   }
   void log_profiling_delegate(const char* name, int32_t, et_timestamp_t start,
       et_timestamp_t end, const void* = nullptr, size_t = 0) override {
-    if (end < start) return;
+    if (end < start) {invalid_gpu_timestamp=true;return;}
     std::string label = name ? name : "unnamed";
     // The pinned Vulkan delegate labels shader timestamp queries with a dispatch
     // id. XNNPACK uses the same callback for CPU timings in PAL clock ticks.
     if (label.find("\"dispatch_id\":") != std::string::npos) {
-      gpu.push_back({{"name", label}, {"start_ns", start}, {"end_ns", end},
-                     {"ms", double(end - start) / 1e6}});
+      auto event=Json::parse(label,nullptr,false);
+      if(event.is_discarded()||!event.is_object())event=Json{{"name",label}};
+      event.update({{"start_ns",start},{"end_ns",end},{"ms",double(end-start)/1e6}});
+      gpu.push_back(event);
     } else {
       auto scale = executorch::runtime::pal_ticks_to_ns_multiplier();
       cpu_delegate.push_back({{"name", label},

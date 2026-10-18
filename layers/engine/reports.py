@@ -46,8 +46,9 @@ def summarize(report):
     for result in report.get("results", []):
         samples = result.get("samples", [])
         result["timings"] = {key: distribution([s.get(key) for s in samples])
-                             for key in ("execution_ms", "model_ms", "gpu_ms", "input_staging_ms", "output_staging_ms", "submit_and_wait_ms")}
-        result["timing_valid"] = (result.get("status") == "passed"
+                             for key in ("execution_ms", "model_ms", "gpu_ms", "gpu_span_ms", "input_staging_ms", "output_staging_ms", "submit_and_wait_ms")}
+        result["timing_valid"] = (result.get('timing_valid') is not False and result.get("status") == "passed"
+                                  and all(result.get(k,{}).get('passed') is not False for k in ('correctness','correctness_before','correctness_after'))
                                   and not result.get("thermal_discontinuity", False)
                                   and not result.get("focus_lost", False))
     report["counts"] = {s: sum(r.get("status") == s for r in report.get("results", []))
@@ -80,7 +81,10 @@ def summarize(report):
                     else:comparison["reason"] = "XR frame metrics unavailable or invalid"
             comparisons.append(comparison)
         report["xr_comparisons"] = comparisons
-    return report
+    from layers.engine.diagnostics import enrich
+    enrich(report)
+    from layers.engine.experiments import enrich as enrich_kernels
+    return enrich_kernels(report)
 
 
 def validate(report):
@@ -98,6 +102,30 @@ def validate(report):
         raise ValueError("Invalid configuration")
     if not isinstance(report.get("device"), dict):
         raise ValueError("Missing device metadata")
+    experiment=report.get('experiment')
+    if experiment is not None:
+        if (not isinstance(experiment,dict) or experiment.get('version')!=1
+            or experiment.get('kind') not in ('aa','candidate') or type(experiment.get('pairs')) is not int
+            or not 6<=experiment['pairs']<=40 or experiment['pairs']%2
+            or config.get('experiment')!=experiment['kind'] or config.get('experiment_pairs')!=experiment['pairs']):
+            raise ValueError('Invalid kernel experiment envelope')
+    diagnostics=report.get('diagnostics')
+    if diagnostics is not None:
+        if not isinstance(diagnostics,dict) or diagnostics.get('version')!=1:
+            raise ValueError('Unknown diagnostics version')
+        stages=diagnostics.get('stages_ms')
+        if not isinstance(stages,dict) or not distribution([diagnostics.get('session_ms'),*stages.values()]):
+            raise ValueError('Invalid session timing')
+        if not math.isclose(sum(stages.values()),diagnostics['session_ms'],rel_tol=1e-6,abs_tol=.01):
+            raise ValueError('Exclusive stages must account for session wall time')
+    calibration=report.get('calibration')
+    if calibration is not None:
+        if not isinstance(calibration,dict) or calibration.get('version')!=1 or type(calibration.get('available')) is not bool:
+            raise ValueError('Invalid calibration envelope')
+        if calibration['available']:
+            values=[calibration.get(k) for k in ('compute_gflops','memory_gbps','dispatch_ms','scratch_bytes','wall_ms')]
+            if not distribution(values) or any(v<=0 for v in values[:4]) or values[3]>64*1024*1024 or values[4]>15000:
+                raise ValueError('Invalid calibration rates or limits')
     for field in ("suite_revision", "runtime_revision"):
         if not isinstance(report.get(field), str) or not report[field]:
             raise ValueError("Missing revision")
@@ -119,13 +147,26 @@ def validate(report):
             raise ValueError("Invalid result status/operation")
         if result["status"] == "passed" and result.get("correctness", {}).get("passed") is not True:
             raise ValueError("Passed result requires correctness evidence")
+        for observation in result.get('validation_observations',[]):
+            if not isinstance(observation,dict) or not distribution([observation.get(k) for k in ('total_ms','inference_ms','comparison_ms')]):
+                raise ValueError('Invalid validation observation')
+            if type(observation.get('passed')) is not bool or observation['comparison_ms']>observation['total_ms']:
+                raise ValueError('Invalid validation accounting')
         samples = result.get("samples")
         if not isinstance(samples, list) or len(samples) > 100000:
             raise ValueError("Invalid samples")
         if result["status"] == "passed" and result["phase"] != "baseline" and not samples:
             raise ValueError("Passed result requires timing samples")
         for sample in samples:
-            for name in ("execution_ms", "model_ms", "gpu_ms"):
+            events=sample.get('dispatches',[])
+            if not isinstance(events,list) or len(events)>10000:raise ValueError('Invalid GPU dispatch list')
+            for event in events:
+                if not isinstance(event,dict) or not distribution([event.get(k) for k in ('start_ns','end_ns','ms')]) or event['end_ns']<event['start_ns']:
+                    raise ValueError('Invalid GPU dispatch timing')
+                for key in ('global_size','local_size'):
+                    if key in event and (not isinstance(event[key],list) or len(event[key])!=3 or any(type(n) is not int or n<=0 for n in event[key])):
+                        raise ValueError('Invalid dispatch workgroup dimensions')
+            for name in ("execution_ms", "model_ms", "gpu_ms", "gpu_span_ms", "input_staging_ms", "output_staging_ms", "submit_and_wait_ms", "dispatch_count"):
                 value = sample.get(name)
                 if (name == "execution_ms" or value is not None) and (
                         type(value) not in (int, float) or value < 0 or not math.isfinite(value)):

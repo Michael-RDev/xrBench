@@ -39,7 +39,7 @@ def test_every_preset_queues_the_full_ordered_catalog(controller,mode,preset):
 
 
 def test_configuration_validation(controller):
-    for body in ({"mode":"web"},{"cases":["linear_odd"]},{"serial":"wrong"},{"shell":"whoami"},{"operations":["linear"]},{"cases":[]},{"operations":[]}):
+    for body in ({"mode":"web"},{"cases":["linear_odd"]},{"serial":"wrong"},{"shell":"whoami"},{"operations":["unknown"]},{"cases":[]},{"operations":[]},{"operations":["linear","linear"]},{"calibration":"bad"}):
         with pytest.raises(ValueError):controller.create(body)
     assert controller.create({"mode":"xr"})["configuration"]["mode"]=="xr"
 

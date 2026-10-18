@@ -78,3 +78,18 @@ def test_xr_requires_same_scene(pair):
     assert compare(a,b)['compatible']
     b['scene_settings']['width']=1024
     assert not compare(a,b)['compatible']
+
+
+def test_selected_workloads_must_match(pair):
+    a,b=pair;b['configuration']['cases'].append('matmul_odd')
+    assert not compare(a,b)['compatible']
+    assert not compare(a,b)['results'][0]['metrics']['execution_ms']['valid']
+
+
+def test_gpu_span_comparison_requires_verified_domain(pair):
+    a,b=pair
+    for report in (a,b):
+        report['results'][0]['samples'][0].update(gpu_span_ms=.2,gpu_span_scope='single graph, common queue timestamp domain')
+    assert compare(a,b)['results'][0]['metrics']['gpu_span_ms']['valid']
+    b['results'][0]['samples'][0]['gpu_span_scope']='unverified'
+    assert not compare(a,b)['results'][0]['metrics']['gpu_span_ms']['valid']

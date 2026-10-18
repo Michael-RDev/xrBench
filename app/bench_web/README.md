@@ -4,7 +4,8 @@ The default website contains a locally bundled Three.js headset hero and a live
 results section that appears after starting or selecting a run. The Run button
 beneath the hero description starts the full isolated smoke
 suite on the single connected, authorized headset, then becomes Stop while a run
-is active. Progress and setup messages appear below Run, hidden when idle;
+is active. The borderless See supported devices action opens the current compatibility list.
+Progress and setup messages appear below Run, hidden when idle;
 the live results section groups all 63 cases into 25 layer types. Expand a layer
 to see input shapes, correctness status, sample count, median/p95 execution latency,
 and GPU timestamps when available. Failed, unsupported, interrupted, and invalid
@@ -18,7 +19,9 @@ available without WebGL. Missing or multiple headsets receive setup guidance.
 
 The hero detects devices through the local ADB service (developer mode and USB
 debugging are required). Host device discovery refreshes every three seconds. It shows a connection prompt
-until a device is identified. Quest 3 receives a locally built, procedural model;
+until a device is identified. With no device attached, “Connect XR device” appears
+as gently floating, extruded sage lettering; reduced motion keeps the lettering still.
+This CSS effect remains available without WebGL. Quest 3 receives a locally built, procedural model;
 other models are identified without substituting an inaccurate Quest preview.
 Unauthorized Quest 3 devices can be previewed while awaiting the debugging prompt.
 Benchmark eligibility remains independent of preview availability.
@@ -52,3 +55,5 @@ or a hardware telemetry display. No models, textures, or fonts load remotely.
 
 Run `npm ci && npm run build` from the repository root after a fresh checkout or
 scene change. The rest of the interface is buildless HTML/CSS/JavaScript.
+
+Stats for Nerds now links to the compact [diagnostic dashboard](../stats_for_nerds/README.md). Its operation selection and continuous mode do not change homepage Run: the homepage still requests the full suite. Automatic calibration is shared by native runs.
