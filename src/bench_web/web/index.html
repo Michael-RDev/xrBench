@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Help build an open source XR kernel community for standalone headsets and smart glasses. Working toward faster, more efficient on-device compute for XR apps.">
+  <title>xrBench — Better XR. Built together.</title>
+  <link rel="stylesheet" href="/bench/style.css"><script type="module" src="/bench/app.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to benchmark</a>
+<header class="shell"><a class="brand" href="/" aria-label="xrBench home">xr<span>Bench</span><span class="brand-dot" aria-hidden="true"></span></a><span class="header-note">An open source XR community</span><nav aria-label="Main navigation"><a id="stats-link" href="/stats/">Stats for Nerds <span aria-hidden="true">↗</span></a></nav></header>
+<main id="main" class="shell" tabindex="-1">
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="hero-copy">
+      <p class="hero-eyebrow"><span aria-hidden="true"></span>Made for a more open reality</p>
+      <h1 id="hero-title">Better XR. <br>Built <span>together.</span></h1><p class="lede">Help build an open source XR kernel community for standalone headsets and smart glasses. Together, we’re working toward faster, more efficient on-device compute for XR apps.</p>
+      <div class="hero-actions">
+        <button id="run" class="primary" aria-label="Run all tests" disabled><span id="run-label">Run</span><span id="run-icon" aria-hidden="true">▶</span></button>
+        <button class="text-action" type="button" popovertarget="supported-devices">See supported devices</button>
+        <span id="demo-trigger"></span>
+        <button id="back-headset" class="text-action" type="button" hidden>Back to headset</button>
+        <p id="run-status" class="run-status" role="status" hidden></p>
+        <div id="notice" class="notice" role="status" hidden><span id="notice-message"></span> <button id="retry-status" class="text-action" type="button">Retry</button>
+          <details id="setup-help" hidden><summary>Local runner setup</summary><p>Build the native benchmark app on this computer, then select Retry. With the repository toolchain and exported workloads ready, run:</p><code>uv run --extra export --group dev python -m engine.build</code><p>The benchmark service installs the app on your selected device when you run.</p></details></div>
+      </div>
+      <div id="demo-mount"></div>
+    </div>
+    <div id="headset-stage" class="headset-stage">
+      <pre class="ascii-headset" aria-hidden="true"></pre>
+      <section id="chip-dashboard" class="chip-dashboard" aria-label="Live processor benchmark" hidden>
+        <div class="chip-topline"><span class="chip-pin"></span><span id="chip-source-title">ON-DEVICE COMPUTE</span><span class="chip-live">NATIVE</span></div>
+        <p id="chip-identity" class="chip-identity"></p>
+        <div class="chip-metrics">
+          <div><p id="chip-kicker">Preparing</p><div id="chip-timer">00:00</div><p id="chip-eta">ETA · Estimating…</p></div>
+          <div class="chip-completion"><div id="chip-gauge" role="progressbar" aria-label="Suite completed" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="chip-percent">0%</span></div><span>Suite completed</span></div>
+        </div>
+        <p id="chip-count">0 cases processed</p>
+        <div class="chip-work"><div class="chip-now"><span class="micro-label">NOW RUNNING</span><p id="chip-operation" role="status" aria-live="polite"></p><div class="chip-badges"><span id="chip-correctness"></span><span id="chip-samples"></span></div></div><div class="chip-history"><span class="micro-label">RECENT RESULTS</span><div id="chip-recent"></div></div></div>
+        <div class="chip-regions" aria-label="Processor activity"><div class="chip-region" data-processor="cpu"><strong>CPU</strong><span>Pending</span></div><div class="chip-region" data-processor="gpu"><strong>GPU</strong><span>Pending</span></div></div>
+      </section>
+    </div>
+    <div class="compute-view">
+    <section class="device-panel" aria-label="Connected device">
+      <div class="device-topline"><span class="device-label">YOUR CONNECTION</span><span id="device-demo-badge" class="demo-tag" hidden>Simulated device</span></div>
+      <div id="device-status" class="device-status" role="status" aria-live="polite">
+        <select id="device-picker" aria-label="Device to benchmark" hidden></select><p id="device-name">Looking for your headset</p>
+        <p id="device-chip" class="device-chip"></p><p id="device-help">Checking the local benchmark service…</p>
+        <button id="device-retry" class="text-action" type="button" hidden>Retry connection</button>
+      </div>
+    </section>
+      <section id="chip-details" aria-label="Benchmark evidence" hidden>
+        <div id="processor-phases" class="processor-phases"></div>
+          <details class="chip-evidence"><summary>Case status details</summary><div id="chip-case-evidence"></div></details>
+      </section>
+      </div>
+  </section>
+  <section id="results" class="results" aria-labelledby="results-title" hidden>
+    <div class="results-heading"><div><p class="eyebrow">Measured on your device</p><h2 id="results-title">Every layer. On your silicon.</h2></div><a id="results-link" href="#layer-results">View case results ↓</a></div>
+    <div id="result-processors" class="result-processors" aria-label="Processor results" hidden></div><div class="run-overview">
+      <div class="run-current"><span id="run-phase" class="run-phase">Preparing</span><p id="current-layer" role="status" aria-live="polite"></p><p id="run-context" class="run-context"></p></div>
+      <div class="run-completion"><span id="completion-count"></span><progress id="suite-progress" value="0" max="63" aria-label="Benchmark cases processed"></progress><div id="result-counts" class="result-counts"></div></div>
+    </div>
+    <p class="results-note">Each layer shows its median latency range across measured input shapes. Expand a layer for individual cases. Warmups and correctness checks are excluded.</p>
+    <div id="layer-results" class="layer-results"></div>
+    <p id="timing-note" class="results-footnote">Native execution timings. CPU and GPU results stay separate and remain local.</p>
+  </section>
+</main>
+<div id="supported-devices" class="supported-devices" popover role="dialog" aria-labelledby="supported-devices-title">
+  <div class="supported-devices-heading"><h2 id="supported-devices-title">Supported devices</h2><button type="button" popovertarget="supported-devices" popovertargetaction="hide" aria-label="Close supported devices">×</button></div>
+  <p>Compute test requirements</p>
+  <ul id="device-catalog"><li>Android 10+ · arm64-v8a <span>Native CPU and GPU capabilities checked on device</span></li></ul>
+  <p>Recognition, compatibility, and hardware validation are separate. Android devices require USB debugging. Apple Metal support is planned; specialized spatial chips require accessible native SDKs. The optional XR scene remains Quest 3 specific.</p>
+</div>
+
+</body></html>

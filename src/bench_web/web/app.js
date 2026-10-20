@@ -1,0 +1,185 @@
+import {selectedRunId,rememberRun,frontendLink} from '/shared/session.mjs';
+import {terminal} from '/stats/view-model.mjs';
+import {deviceView} from '/bench/device-view.mjs';
+import {renderResults} from '/bench/results-view.mjs';
+import {chipEvidence,standaloneChipEvidence,renderChip,clockLabel} from '/bench/chip-view.mjs';
+import {mountHeadset} from '/bench/ascii-headset.mjs';
+import {ENABLE_SMOKE_DEMO} from '/bench/features.mjs';
+
+const $=id=>document.getElementById(id);
+let token='',status=null,selected=selectedRunId(),report=null,selectedSerial=null;
+let selectedSession=new URLSearchParams(location.search).get('session'),reports={},reportKeys={};
+let refreshing=false,busy=false,connected=false,mutation=0,actionError='',serviceError='',catalog=null;
+let progressView=null,pendingRequest=null,animateNext=false,demoGeneration=0,presentationKey='';
+const dismissedPresentations=new Set();
+const observedProgress=new Map();
+const headset=mountHeadset($('headset-stage'));
+const demo=ENABLE_SMOKE_DEMO?(await import('/bench/smoke-demo.mjs')).mountSmokeDemo({
+  document,onChange:()=>render(),onRetry:()=>poll(),canEnter:()=>!busy&&!activeSession()&&!active(),
+}):null;
+const sessionPattern=/^bench-[0-9a-f]{32}$/;
+if(!sessionPattern.test(selectedSession||''))selectedSession=null;
+function session(){return status?.benchmark_sessions?.find(s=>s.session_id===selectedSession);}
+function activeSession(){return status?.benchmark_sessions?.find(s=>!terminal.has(s.status));}
+function job(){return status?.jobs.find(run=>run.run_id===selected);}
+function active(){return status?.jobs.find(run=>!terminal.has(run.status));}
+async function api(path,body){
+  const response=await fetch(path,{headers:{'X-XRGPU-Session':token,...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{method:'POST',body:JSON.stringify(body)})});
+  const data=await response.json();if(!response.ok)throw Error(data.error||'Local service unavailable');return data;
+}
+function rememberSession(){if(!selectedSession)return;const url=new URL(location.href);url.searchParams.set('session',selectedSession);history.replaceState(null,'',url);}
+function renderDevice(){
+  const devices=status?.devices||[],picker=$('device-picker');
+  if(picker.dataset.identities!==JSON.stringify(devices.map(d=>[d.serial,d.model]))){
+    const option=(value,text)=>{const el=document.createElement('option');el.value=value;el.textContent=text;return el;};
+    picker.replaceChildren(option('','Choose device…'),...devices.map(d=>option(d.serial,d.identity?.device_name||d.model)));
+    picker.dataset.identities=JSON.stringify(devices.map(d=>[d.serial,d.model]));
+  }
+  picker.hidden=devices.length<2;picker.value=selectedSerial||'';picker.disabled=!!activeSession()||!!active();
+  const view=deviceView(status,serviceError,selectedSerial),parent=session();
+  if(parent?.capabilities_checked&&parent.connection_id===view.connectionId&&parent.identity){view.identity=parent.identity;}
+  $('device-name').textContent=view.label;$('device-chip').textContent=view.identity?.chip_name||'';
+  $('device-help').textContent=view.help;$('device-help').hidden=!view.help;
+  $('device-retry').hidden=['connected','searching'].includes(view.kind);
+  if(view.kind==='connected'&&!status?.apk_ready){$('device-help').textContent='Device connected. The local benchmark app needs setup before running.';$('device-help').hidden=false;}
+  document.querySelector('.device-panel').dataset.state=view.kind;
+}
+function renderCatalog(){
+  if(!catalog)return;const list=$('device-catalog');list.replaceChildren();
+  for(const chip of catalog.chips){const item=document.createElement('li'),name=document.createElement('strong'),detail=document.createElement('span');
+    name.textContent=chip.name;detail.textContent=chip.execution==='android_probe_required'?'Android native CPU / GPU · capability check required':chip.execution==='planned_metal'?'Apple Metal runner · planned':'Specialized processor · compute runner unavailable';
+    const models=catalog.devices.filter(d=>d.chips.some(c=>c.chip_id===chip.id)||d.primary_chip_options?.includes(chip.id)).map(d=>d.name);
+    if(models.length)detail.textContent+=' · '+models.join(', ');
+    item.append(name,detail);list.append(item);
+  }
+}
+function presentChip(source='native'){
+  presentationKey=progressView?`${source}:${progressView.id}:${source==='simulated'?demoGeneration:''}`:'';
+  const show=!!progressView&&!dismissedPresentations.has(presentationKey);
+  renderChip(document,show?progressView:null,source);
+  document.querySelector('.hero').classList.toggle('benchmark-active',show);
+  $('back-headset').hidden=!show||!terminal.has(progressView.status);
+  headset.setPresentation({mode:show?'chip':'headset',runKey:presentationKey,processor:progressView?.processor||'cpu',source,animate:show&&animateNext});
+  if(show&&animateNext&&window.innerWidth<=620){
+    const stage=$('headset-stage');
+    stage.style.scrollMarginTop=(document.querySelector('.hero-actions').offsetHeight+12)+'px';
+    stage.scrollIntoView?.({block:'start',behavior:window.matchMedia?.('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
+  }
+  if(show)animateNext=false;
+}
+function render(){
+  const nativeRunning=activeSession()||active();
+  if(nativeRunning&&demo&&demo.controller.snapshot.stage!=='closed'){demo.controller.exit();return;}
+  demo?.update(catalog,status?.catalog,busy||!!nativeRunning);
+  const preview=demo?.controller.snapshot;
+  const simulated=!!preview&&preview.stage!=='closed';
+  if(simulated){renderDemo(preview);return;}
+  rememberRun(selected);rememberSession();
+  $('device-demo-badge').hidden=true;
+  $('stats-link').href=frontendLink('/stats/',selected);
+  const parent=session(),running=activeSession()||active(),run=parent||job()||report;
+  const stopping=running?.cancel_requested;
+  $('run-icon').textContent=running?'■':'▶';
+  $('run-label').textContent=stopping?'Stopping…':busy?(running?'Stopping…':'Starting…'):running?'Stop':run?'Run again':'Run';
+  $('run').setAttribute('aria-label',running?'Stop benchmark':'Run CPU then GPU tests');$('run').disabled=!connected||busy||!!stopping;$('run').setAttribute('aria-busy',String(busy||!!stopping));
+  const progress=run?(terminal.has(run.status)?`Benchmark ${run.status}. Results are preserved below.`:run.error||run.message||(parent?'CPU → GPU · native execution':'Native benchmark running')):'';
+  $('run-status').textContent=progress;$('run-status').hidden=!progress;
+  renderResults(document,status,job(),report);
+  $('timing-note').textContent=report?.timing_scope||'Native execution timings. CPU and GPU results stay separate and remain local.';
+  renderDevice();
+  progressView=chipEvidence(parent,reports,status?.catalog?.cases||[])||standaloneChipEvidence(job()||report,report,status?.catalog?.cases||[]);
+  presentChip();
+  $('notice-message').textContent=serviceError||actionError;$('notice').hidden=!(serviceError||actionError);
+  $('setup-help').hidden=!/benchmark app is not ready|\bAPK\b/i.test(actionError);
+  const buttons=$('result-processors');buttons.hidden=!parent;
+  if(parent){buttons.replaceChildren(...parent.phases.map(phase=>{const button=document.createElement('button');button.type='button';button.textContent=phase.processor.toUpperCase();button.disabled=!reports[phase.run_id];button.setAttribute('aria-pressed',String(selected===phase.run_id));button.onclick=()=>{selected=phase.run_id;report=reports[selected];render();};return button;}));}
+}
+function renderDemo(preview){
+  const controller=demo.controller,parent=preview.session,selectedReport=preview.reports[preview.selected];
+  const running=parent?.status==='running';
+  $('run-icon').textContent=running?'■':'▶';
+  $('run-label').textContent=running?'Stop demo':parent?'Run demo again':'Run demo';
+  $('run').setAttribute('aria-label',running?'Stop demo':'Run simulated CPU then GPU tests');
+  $('run').disabled=preview.stage!=='connected'||!controller.ready;$('run').setAttribute('aria-busy','false');
+  $('run-status').textContent=parent?(running?'Simulated CPU → GPU · sample data only':parent.status==='complete'?'Demo complete. All results below are simulated.':'Demo stopped. Partial sample results are shown below.'):preview.stage==='connected'?'Ready for a simulated CPU → GPU run.':'Choose a device to preview the benchmark.';
+  $('run-status').hidden=false;$('notice').hidden=true;
+  $('device-picker').hidden=true;$('device-retry').hidden=true;$('device-demo-badge').hidden=false;
+  $('device-name').textContent=preview.identity?.device_name||'Explore without a headset';
+  $('device-chip').textContent=preview.identity?.chip_name||'';
+  $('device-help').hidden=false;
+  $('device-help').textContent=preview.stage==='connected'?'Simulated connection · no hardware is being used.':preview.stage==='connecting'?'Connecting a simulated device…':'Choose any catalog device in the demo panel.';
+  document.querySelector('.device-panel').dataset.state='simulated';
+  renderResults(document,controller.displayStatus,selectedReport,selectedReport,'simulated');
+  $('timing-note').textContent='Simulated timings and correctness. Sample data is identical across device models and is never saved.';
+  progressView=chipEvidence(parent,preview.reports,controller.displayStatus.catalog?.cases||[]);
+  presentChip('simulated');
+  const buttons=$('result-processors');buttons.hidden=!parent;
+  if(parent){
+    const focus=document.activeElement?.closest('#result-processors button')?.textContent;
+    buttons.replaceChildren(...parent.phases.map(phase=>{
+      const button=document.createElement('button');button.type='button';button.textContent=phase.processor.toUpperCase();
+      button.disabled=running||phase.status==='pending';button.setAttribute('aria-pressed',String(preview.selected===phase.run_id));
+      button.onclick=()=>controller.selectReport(phase.run_id);return button;
+    }));
+    if(focus)[...buttons.children].find(button=>button.textContent===focus)?.focus({preventScroll:true});
+  }
+}
+async function poll(){
+  if(refreshing||busy)return;refreshing=true;const generation=mutation;
+  try{
+    if(!token)token=(await api('/api/session')).token;
+    const next=await api('/api/status');if(generation!==mutation)return;status=next;
+    if(!catalog){try{catalog=await api('/api/device-catalog');renderCatalog();}catch{/* Detection and controls still work without the catalog panel. */}}
+    if(!selectedSession&&!selected&&status.benchmark_sessions?.length)selectedSession=(activeSession()||status.benchmark_sessions[0]).session_id;
+    if(activeSession())selectedSession=activeSession().session_id;
+    else if(active()){selectedSession=null;selected=active().run_id;}
+    const parent=session();
+    if(parent){
+      for(const phase of parent.phases){const key=phase.run?.progress?.sequence;const previous=observedProgress.get(phase.run_id);if(!previous||previous.sequence!==key)observedProgress.set(phase.run_id,{sequence:key,at:Date.now()});if(phase.run)phase.run.progress_received_at=observedProgress.get(phase.run_id).at;}
+      for(const phase of parent.phases){const run=phase.run,key=run?.report_revision||run?.status;
+        if(run?.report_available&&reportKeys[phase.run_id]!==key){const value=await api('/api/runs/'+phase.run_id+'/report');if(generation!==mutation)return;reports[phase.run_id]=value;reportKeys[phase.run_id]=key;}}
+      const current=parent.phases[parent.current_phase];
+      if(!selected||(!terminal.has(parent.status)&&current?.run))selected=current.run_id;
+      report=reports[selected]||null;
+    }else{
+      if(!selected&&status.jobs.length)selected=(active()||status.jobs[0]).run_id;
+      const current=job(),key=current?.report_revision||current?.status||'saved';
+      if(current){const sequence=current.progress?.sequence,previous=observedProgress.get(current.run_id);if(!previous||previous.sequence!==sequence)observedProgress.set(current.run_id,{sequence,at:Date.now()});current.progress_received_at=observedProgress.get(current.run_id).at;}
+      if(selected&&reportKeys[selected]!==key&&(!current||current.report_available||current.counts)){
+        report=await api('/api/runs/'+selected+'/report');if(generation!==mutation)return;reports[selected]=report;reportKeys[selected]=key;
+      }
+    }
+    connected=true;serviceError='';render();
+  }catch(error){if(generation!==mutation)return;connected=false;serviceError=error.message+' — reconnect to the local benchmark service.';render();}
+  finally{refreshing=false;}
+}
+async function retry(){if(busy)return;token='';actionError='';await poll();}
+$('retry-status').onclick=retry;$('device-retry').onclick=retry;
+$('back-headset').onclick=()=>{dismissedPresentations.add(presentationKey);render();$('run').focus({preventScroll:true});document.querySelector('.hero').scrollIntoView?.({block:'start',behavior:'auto'});};
+$('device-picker').onchange=()=>{selectedSerial=$('device-picker').value||null;pendingRequest=null;render();};
+$('run').onclick=async()=>{
+  if(demo&&demo.controller.snapshot.stage!=='closed'){
+    if(demo.controller.snapshot.session?.status==='running')demo.controller.stop();else{demoGeneration++;animateNext=true;demo.controller.start();}return;
+  }
+  if(busy||!connected)return;const running=activeSession()||active();if(running?.cancel_requested)return;actionError='';
+  let device;
+  if(!running){
+    const view=deviceView(status,'',selectedSerial);device=status.devices.find(d=>d.serial===view.serial&&d.state==='device'&&d.supported);
+    if(!device){actionError=view.kind==='multiple'?'Choose one device before running.':view.kind==='absent'?'Connect an Android arm64 device by USB and approve USB debugging.':view.help;render();return;}
+    if(!status.apk_ready){actionError='The benchmark app is not ready on this computer. Complete local runner setup below, then select Retry.';render();return;}
+  }
+  busy=true;mutation++;render();
+  try{
+    if(running?.session_id){const stopped=await api('/api/benchmark-sessions/'+running.session_id+'/stop',{});status.benchmark_sessions=status.benchmark_sessions.map(s=>s.session_id===stopped.session_id?stopped:s);}
+    else if(running){const stopped=await api('/api/runs/'+running.run_id+'/stop',{});status.jobs=status.jobs.map(r=>r.run_id===stopped.run_id?stopped:r);}
+    else{
+      pendingRequest ||= {serial:device.serial,request_id:crypto.randomUUID().replaceAll('-','')};
+      const created=await api('/api/benchmark-sessions',pendingRequest);animateNext=true;selectedSession=created.session_id;selected=created.phases?.[created.current_phase]?.run?.run_id||null;report=null;pendingRequest=null;
+      if(created.phases?.[created.current_phase]?.run)status.jobs=[created.phases[created.current_phase].run,...status.jobs.filter(j=>j.run_id!==selected)];
+      status.benchmark_sessions=[created,...(status.benchmark_sessions||[]).filter(s=>s.session_id!==created.session_id)];
+    }
+  }catch(error){actionError=error.message;}finally{busy=false;render();}
+};
+await poll();const polling=setInterval(poll,1000);
+const clock=setInterval(()=>{if(progressView?.active&&!document.hidden&&(!demo||demo.controller.snapshot.stage==='closed'))$('chip-timer').textContent=clockLabel(Math.max(0,Date.now()-(session()?.created_at||job()?.created_at||Date.now()/1000)*1000));},250);
+window.addEventListener('pagehide',event=>{if(event.persisted)return;clearInterval(polling);clearInterval(clock);headset.destroy();demo?.destroy();});

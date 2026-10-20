@@ -3,14 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild app/bench_web/src/scene.js --bundle --format=esm --minify --legal-comments=linked --outfile=app/bench_web/web/scene.bundle.js",
-    "test": "node --experimental-vm-modules --test app/stats_for_nerds/tests/test_web.mjs app/bench_web/tests/*.mjs"
-  },
-  "dependencies": {
-    "three": "0.186.1"
+    "test": "node --experimental-vm-modules --test src/stats_for_nerds/tests/test_web.mjs src/bench_web/tests/*.mjs"
   },
   "devDependencies": {
-    "esbuild": "0.28.2",
     "jsdom": "30.1.3"
   }
 }

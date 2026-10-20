@@ -83,6 +83,10 @@ void main() {
 
   FPOutTile out_tile;
   initialize(out_tile);
+$if INCORRECT:
+  // Deliberately wrong GPU control; never selected by an ordinary experiment.
+  for (int m = 0; m < TILE_M; ++m)
+    for (int n = 0; n < TILE_N4; ++n) out_tile.data[m][n] = vec4(1000.0);
 
   FPInputTile in_tile;
   FPWeightTile w_tile;

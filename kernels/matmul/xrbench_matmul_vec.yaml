@@ -3,6 +3,7 @@ xrbench_matmul_vec:
     DTYPE: float
     STORAGE: texture3d
     HAS_BIAS: false
+    INCORRECT: false
     TILE_M4: 1
     TILE_K4: 1
     TILE_N4: 1

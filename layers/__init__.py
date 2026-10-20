@@ -8,11 +8,14 @@ import numpy as np
 ROOT = Path(__file__).parent
 
 
-def catalog():
-    return json.loads((ROOT / "catalog.json").read_text())
+def catalog(profile="standard"):
+    if profile not in ("standard", "development"):raise ValueError("Unknown workload suite")
+    spec=json.loads((ROOT / "catalog.json").read_text())
+    if profile=="development":spec["cases"]+=json.loads((ROOT/"development.json").read_text())["cases"]
+    return spec
 
 
-OPERATIONS = frozenset(c["operation"] for c in catalog()["cases"])
+OPERATIONS = frozenset(c["operation"] for c in catalog("development")["cases"])
 
 
 def _definition(operation):
@@ -40,7 +43,9 @@ def select(preset="smoke"):
 
 
 def fixtures(case, seed=None):
-    seed = catalog()["seed"] if seed is None else seed
+    seed = case.get("fixture_seed", catalog()["seed"]) if seed is None else seed
+    # Give each case its own stable random stream, regardless of test order.
+    # Restarting Python shouldn't roll a new set of dice.
     identity = hashlib.sha256(f"{seed}:{case['id']}".encode()).digest()
     rng = np.random.default_rng(int.from_bytes(identity[:8], "little"))
     p = case.get("params", {})
@@ -62,6 +67,7 @@ def fixtures(case, seed=None):
 
 
 def reference(case, inputs, weights):
+    # Do the reference math in float64, then round once to the device's FP32 format.
     xs = [np.asarray(x, dtype=np.float64) for x in inputs]
     w = {k: np.asarray(v, dtype=np.float64) for k, v in weights.items()}
     expected = _definition(case["operation"]).reference(case, xs, w)

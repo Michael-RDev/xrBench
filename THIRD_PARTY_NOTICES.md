@@ -9,6 +9,3 @@ Copies of upstream license texts are in licenses/ and bundled with the APK.
 The Android NDK libc++ runtime includes the NDK notices and LLVM license exceptions.
 Android tooling, Gradle, CMake, shaderc, Python packages, and JSON-java retain their
 own licenses and are installed as local build/test dependencies.
-
-The browser's procedural scene uses Three.js under the MIT license; its license
-is in licenses/three-MIT.txt. Browser rendering does not execute layer benchmarks.

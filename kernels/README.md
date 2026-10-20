@@ -12,19 +12,21 @@ on the intended GPU and driver; device registration does not generate kernels.
 | Workload definition | `layers/<operation>/layer.py` | PyTorch operation, independent NumPy reference, deterministic inputs |
 | Shapes and parameters | `layers/catalog.json` | What the benchmark tests |
 | GPU implementation | `kernels/matmul/*.glsl` | Editable GLSL compute shader templates compiled to SPIR-V |
+| CPU implementation | `kernels/cpu/matmul.h` | FP32 scalar baseline and ARM NEON candidate with dimension tails |
 | Matmul tile choice | `kernels/matmul/config.json` | `tile_m` of 1, 2 or 4; drives both shader generation and native dispatch |
-| Runtime integration | `layers/engine/kernel_hooks.py` | Exact hooks into the pinned ExecuTorch source |
-| Scheduling and validation | `layers/engine/android/.../Runner.java` | Run paired arms and reject incorrect outputs |
-| Evidence analysis | `layers/engine/experiments.py` | Per-dispatch summaries and paired-block comparisons |
+| Runtime integration | `engine/kernel_hooks.py` | Exact hooks into the pinned ExecuTorch source |
+| Scheduling and validation | `engine/android/.../Runner.java` | Run paired arms and reject incorrect outputs |
+| Evidence analysis | `engine/experiments.py` | Per-dispatch summaries and paired-block comparisons |
 
 The Python files describe the layer. They are not the headset GPU implementation.
-The native C++ runner launches Vulkan work; Python on the development computer
+The native C++ runners execute portable CPU, custom CPU matmul, or Vulkan work; Python on the development computer
 exports workloads, builds the APK, controls the device and analyzes reports.
 
 ## First supported experiment
 
-Stock execution still covers all 63 cases. Kernel experiments currently select
-`matmul_rectangular` and `matmul_odd`, using the existing FP32 fixtures and independent
+The standard suite covers 63 cases. Its matmul experiments select
+`matmul_rectangular` and `matmul_odd`; the optional development suite adds twelve
+matmul shape/seed cases and synthetic model segments. All use FP32 fixtures and independent
 NumPy references. The candidate uses a separate shader namespace, copied from the
 pinned upstream matmul templates, with a configurable row tile (initially 2).
 This is an experimental implementation, not a claim that tile 2 is faster.
@@ -35,8 +37,8 @@ declared tracing and candidate selection hooks; unknown dependency edits fail ve
 2. Install the declared hooks and build:
 
    ```sh
-   uv run python -c 'from layers.engine.prepare import install_kernel_hooks, verify; install_kernel_hooks(); verify()'
-   uv run --extra export --group dev python -m layers.engine.build
+   uv run python -c 'from engine.prepare import install_kernel_hooks, verify; install_kernel_hooks(); verify()'
+   uv run --extra export --group dev python -m engine.build
    ```
 
 3. Launch (or restart) the local website, connect the headset by USB, authorize debugging, and
@@ -64,7 +66,7 @@ pairs are not silently discarded. Continuous mode is disabled for experiments.
 ## Returning evidence to the development computer
 
 When the headset is attached to your computer, the existing ADB controller retrieves
-reports into `layers/.state/runs/` and submits them to your local database. An
+reports into `engine/.state/runs/` and submits them to your local database. An
 app-installation UUID allows reports from the same installation to be correlated;
 USB serials are excluded from reports. Reinstalling after clearing app data changes
 that UUID, and it is not hardware attestation.
@@ -73,7 +75,7 @@ When someone runs on their own computer, they can use **Download diagnostics** a
 return that JSON file. Analyze it without a headset or database:
 
 ```sh
-uv run python -m layers.engine.evidence returned-report.json --output analysis.json
+uv run python -m engine.evidence returned-report.json --output analysis.json
 ```
 
 This validates the envelope and recomputes summaries from raw samples, preserves
@@ -101,10 +103,21 @@ multiple comparisons and application impact still require investigation.
 
 ## Remaining hardware and workload work
 
-No physical headset was connected during implementation. The APK and software checks
-can be validated on the computer; device correctness, noise, instrumentation overhead
-and speedup remain unmeasured. The first candidate retains a fixed deterministic
-fixture per case. More seeds, a kernel-only resident-buffer execution mode, hardware
-counters/clock telemetry where supported, FP16/quantized cases, and representative
-model segments remain follow-on work. The current synthetic XR scene continues to
-measure stock workload interference; paired candidate experiments are isolated only.
+No physical headset was connected during implementation. Device correctness, noise,
+instrumentation overhead and speedup remain unmeasured. An optional direct Vulkan
+runner now uses persistent buffers and a development suite provides additional seeds,
+shapes and synthetic MLP/attention segments. Hardware counters, FP16/quantized cases,
+production model captures and application validation remain follow-on work.
+
+See [Device support and hardware validation](PORTABILITY.md) for capability discovery,
+backend selection, memory/timing scopes, negative controls, and the qualification CLI.
+
+## CPU matmul experiments
+
+Choose **CPU resident matmul (scalar / NEON)** in Stats for Nerds. Stock uses the
+scalar implementation; candidate uses four-column NEON vectors and scalar tails.
+Both run on one calling thread and use the same fixtures, references, tolerances,
+randomized pairs and wrong-output/slower controls as GPU experiments. No GPU
+calibration or instrumentation runs. This is a reference implementation, not a
+claim of optimized performance. The full standard CPU suite uses ExecuTorch
+portable operators through `executorch_cpu`, independently of GPU export readiness.

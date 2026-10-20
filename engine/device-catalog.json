@@ -1,0 +1,419 @@
+{
+  "version": 1,
+  "chips": [
+    {
+      "id": "xr1",
+      "name": "Qualcomm Snapdragon XR1",
+      "vendor": "Qualcomm",
+      "aliases": [
+        "Snapdragon XR1",
+        "Qualcomm Snapdragon XR1"
+      ],
+      "source": "https://www.qualcomm.com/xr-vr-ar",
+      "execution": "android_probe_required"
+    },
+    {
+      "id": "xr2",
+      "name": "Qualcomm Snapdragon XR2 Gen 1",
+      "vendor": "Qualcomm",
+      "aliases": [
+        "Snapdragon XR2 Gen 1",
+        "Qualcomm Snapdragon XR2 Gen 1"
+      ],
+      "source": "https://www.qualcomm.com/xr-vr-ar",
+      "execution": "android_probe_required"
+    },
+    {
+      "id": "xr2-plus",
+      "name": "Qualcomm Snapdragon XR2+ Gen 1",
+      "vendor": "Qualcomm",
+      "aliases": [
+        "Snapdragon XR2+ Gen 1",
+        "Qualcomm Snapdragon XR2+ Gen 1"
+      ],
+      "source": "https://www.qualcomm.com/xr-vr-ar",
+      "execution": "android_probe_required"
+    },
+    {
+      "id": "xr2-gen2",
+      "name": "Qualcomm Snapdragon XR2 Gen 2",
+      "vendor": "Qualcomm",
+      "aliases": [
+        "Snapdragon XR2 Gen 2",
+        "Qualcomm Snapdragon XR2 Gen 2"
+      ],
+      "source": "https://www.qualcomm.com/xr-vr-ar",
+      "execution": "android_probe_required"
+    },
+    {
+      "id": "xr2-plus-gen2",
+      "name": "Qualcomm Snapdragon XR2+ Gen 2",
+      "vendor": "Qualcomm",
+      "aliases": [
+        "Snapdragon XR2+ Gen 2",
+        "Qualcomm Snapdragon XR2+ Gen 2"
+      ],
+      "source": "https://www.qualcomm.com/xr-vr-ar",
+      "execution": "android_probe_required"
+    },
+    {
+      "id": "reality-elite",
+      "name": "Qualcomm Snapdragon Reality Elite",
+      "vendor": "Qualcomm",
+      "aliases": [
+        "Snapdragon Reality Elite",
+        "Qualcomm Snapdragon Reality Elite"
+      ],
+      "source": "https://www.qualcomm.com/xr-vr-ar",
+      "execution": "android_probe_required"
+    },
+    {
+      "id": "ar1",
+      "name": "Qualcomm Snapdragon AR1 Gen 1",
+      "vendor": "Qualcomm",
+      "aliases": [
+        "Snapdragon AR1 Gen 1",
+        "Qualcomm Snapdragon AR1 Gen 1"
+      ],
+      "source": "https://www.qualcomm.com/xr-vr-ar",
+      "execution": "sdk_access_unverified"
+    },
+    {
+      "id": "ar1-plus",
+      "name": "Qualcomm Snapdragon AR1+ Gen 1",
+      "vendor": "Qualcomm",
+      "aliases": [
+        "Snapdragon AR1+ Gen 1",
+        "Qualcomm Snapdragon AR1+ Gen 1"
+      ],
+      "source": "https://www.qualcomm.com/xr-vr-ar",
+      "execution": "sdk_access_unverified"
+    },
+    {
+      "id": "ar2",
+      "name": "Qualcomm Snapdragon AR2 Gen 1",
+      "vendor": "Qualcomm",
+      "aliases": [
+        "Snapdragon AR2 Gen 1",
+        "Qualcomm Snapdragon AR2 Gen 1"
+      ],
+      "source": "https://www.qualcomm.com/xr-vr-ar",
+      "execution": "sdk_access_unverified"
+    },
+    {
+      "id": "apple-m2",
+      "name": "Apple M2",
+      "vendor": "Apple",
+      "aliases": [
+        "Apple M2"
+      ],
+      "source": "https://support.apple.com/en-us/117810",
+      "execution": "planned_metal"
+    },
+    {
+      "id": "apple-m5",
+      "name": "Apple M5",
+      "vendor": "Apple",
+      "aliases": [
+        "Apple M5"
+      ],
+      "source": "https://www.apple.com/apple-vision-pro/specs/",
+      "execution": "planned_metal"
+    },
+    {
+      "id": "apple-r1",
+      "name": "Apple R1",
+      "vendor": "Apple",
+      "aliases": [
+        "Apple R1"
+      ],
+      "source": "https://www.apple.com/apple-vision-pro/specs/",
+      "execution": "no_general_compute_runner"
+    },
+    {
+      "id": "xreal-x1",
+      "name": "XREAL X1",
+      "vendor": "XREAL",
+      "aliases": [
+        "XREAL X1"
+      ],
+      "source": "https://docs.xreal.com/XREALDevices/XREAL%20Glasses",
+      "execution": "no_general_compute_runner"
+    },
+    {
+      "id": "xreal-x1s",
+      "name": "XREAL X1S",
+      "vendor": "XREAL",
+      "aliases": [
+        "XREAL X1S"
+      ],
+      "source": "https://www.xreal.com/aura",
+      "execution": "no_general_compute_runner"
+    }
+  ],
+  "devices": [
+    {
+      "id": "quest-2",
+      "name": "Meta Quest 2",
+      "aliases": [
+        "Quest 2",
+        "Meta Quest 2",
+        "Oculus Quest 2"
+      ],
+      "chips": [
+        {
+          "chip_id": "xr2",
+          "location": "headset",
+          "role": "primary"
+        }
+      ],
+      "visual": "quest-2",
+      "source": "https://www.meta.com/quest/products/quest-2/"
+    },
+    {
+      "id": "quest-pro",
+      "name": "Meta Quest Pro",
+      "aliases": [
+        "Quest Pro",
+        "Meta Quest Pro"
+      ],
+      "chips": [
+        {
+          "chip_id": "xr2-plus",
+          "location": "headset",
+          "role": "primary"
+        }
+      ],
+      "visual": "quest-pro",
+      "source": "https://www.qualcomm.com/xr-vr-ar/device-finder/meta-quest-pro"
+    },
+    {
+      "id": "quest-3",
+      "name": "Meta Quest 3",
+      "aliases": [
+        "Quest 3",
+        "Meta Quest 3"
+      ],
+      "chips": [
+        {
+          "chip_id": "xr2-gen2",
+          "location": "headset",
+          "role": "primary"
+        }
+      ],
+      "visual": "quest-3",
+      "source": "https://www.qualcomm.com/news/onq/2023/10/qualcomm-and-meta-are-expanding-your-reality-heres-how"
+    },
+    {
+      "id": "quest-3s",
+      "name": "Meta Quest 3S",
+      "aliases": [
+        "Quest 3S",
+        "Meta Quest 3S"
+      ],
+      "chips": [
+        {
+          "chip_id": "xr2-gen2",
+          "location": "headset",
+          "role": "primary"
+        }
+      ],
+      "visual": "quest-3s",
+      "source": "https://www.qualcomm.com/xr-vr-ar/device-finder/meta-quest-3s"
+    },
+    {
+      "id": "pico-4",
+      "name": "PICO 4",
+      "aliases": [
+        "PICO 4",
+        "PICO4"
+      ],
+      "chips": [
+        {
+          "chip_id": "xr2",
+          "location": "headset",
+          "role": "primary"
+        }
+      ],
+      "visual": "pico",
+      "source": "https://www.picoxr.com/global/products/pico4/specs"
+    },
+    {
+      "id": "pico-4-ultra",
+      "name": "PICO 4 Ultra",
+      "aliases": [
+        "PICO 4 Ultra"
+      ],
+      "chips": [
+        {
+          "chip_id": "xr2-gen2",
+          "location": "headset",
+          "role": "primary"
+        }
+      ],
+      "visual": "pico",
+      "source": "https://www.picoxr.com/global/products/pico4-ultra"
+    },
+    {
+      "id": "vive-focus-3",
+      "name": "VIVE Focus 3",
+      "aliases": [
+        "VIVE Focus 3",
+        "HTC VIVE Focus 3"
+      ],
+      "chips": [
+        {
+          "chip_id": "xr2",
+          "location": "headset",
+          "role": "primary"
+        }
+      ],
+      "visual": "vive",
+      "source": "https://www.vive.com/us/product/vive-focus-3/overview/"
+    },
+    {
+      "id": "vive-focus-vision",
+      "name": "VIVE Focus Vision",
+      "aliases": [
+        "VIVE Focus Vision",
+        "HTC VIVE Focus Vision"
+      ],
+      "chips": [
+        {
+          "chip_id": "xr2",
+          "location": "headset",
+          "role": "primary"
+        }
+      ],
+      "visual": "vive",
+      "source": "https://www.vive.com/us/product/vive-focus-vision/overview/"
+    },
+    {
+      "id": "vive-xr-elite",
+      "name": "VIVE XR Elite",
+      "aliases": [
+        "VIVE XR Elite",
+        "HTC VIVE XR Elite"
+      ],
+      "chips": [
+        {
+          "chip_id": "xr2",
+          "location": "headset",
+          "role": "primary"
+        }
+      ],
+      "visual": "vive",
+      "source": "https://www.vive.com/us/product/vive-xr-elite/overview/"
+    },
+    {
+      "id": "galaxy-xr",
+      "name": "Samsung Galaxy XR",
+      "aliases": [
+        "Galaxy XR",
+        "Samsung Galaxy XR"
+      ],
+      "chips": [
+        {
+          "chip_id": "xr2-plus-gen2",
+          "location": "headset",
+          "role": "primary"
+        }
+      ],
+      "visual": "galaxy",
+      "source": "https://www.samsung.com/us/xr/"
+    },
+    {
+      "id": "vision-pro",
+      "name": "Apple Vision Pro",
+      "primary_chip_options": ["apple-m2", "apple-m5"],
+      "aliases": [
+        "Apple Vision Pro",
+        "Vision Pro"
+      ],
+      "chips": [
+        {
+          "chip_id": null,
+          "location": "headset",
+          "role": "primary"
+        },
+        {
+          "chip_id": "apple-r1",
+          "location": "headset",
+          "role": "spatial"
+        }
+      ],
+      "visual": "vision",
+      "source": "https://www.apple.com/apple-vision-pro/specs/"
+    },
+    {
+      "id": "xreal-one",
+      "name": "XREAL One",
+      "aliases": [
+        "XREAL One"
+      ],
+      "chips": [
+        {
+          "chip_id": "xreal-x1",
+          "location": "glasses",
+          "role": "primary"
+        }
+      ],
+      "visual": "glasses",
+      "source": "https://docs.xreal.com/XREALDevices/XREAL%20Glasses"
+    },
+    {
+      "id": "xreal-one-pro",
+      "name": "XREAL One Pro",
+      "aliases": [
+        "XREAL One Pro"
+      ],
+      "chips": [
+        {
+          "chip_id": "xreal-x1",
+          "location": "glasses",
+          "role": "primary"
+        }
+      ],
+      "visual": "glasses",
+      "source": "https://docs.xreal.com/XREALDevices/XREAL%20Glasses"
+    },
+    {
+      "id": "xreal-1s",
+      "name": "XREAL 1S",
+      "aliases": [
+        "XREAL 1S"
+      ],
+      "chips": [
+        {
+          "chip_id": "xreal-x1",
+          "location": "glasses",
+          "role": "primary"
+        }
+      ],
+      "visual": "glasses",
+      "source": "https://docs.xreal.com/XREALDevices/XREAL%20Glasses"
+    },
+    {
+      "id": "xreal-aura",
+      "name": "XREAL Aura",
+      "aliases": [
+        "XREAL Aura",
+        "XREAL AURA"
+      ],
+      "chips": [
+        {
+          "chip_id": "reality-elite",
+          "location": "compute_puck",
+          "role": "primary"
+        },
+        {
+          "chip_id": "xreal-x1s",
+          "location": "glasses",
+          "role": "spatial"
+        }
+      ],
+      "visual": "aura",
+      "source": "https://www.xreal.com/aura"
+    }
+  ]
+}

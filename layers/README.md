@@ -1,6 +1,6 @@
 # Shared native layer benchmarks
 
-Connect Quest 3 by USB, open the local website, and press **Run**. Homepage Run executes all 63 cases across 25 layer types in catalog order; Stats for Nerds can select whole operations.
+Connect an Android 10+ arm64 device by USB, open the local website, and press **Run**. Native capabilities and correctness are checked before timing; Quest 3 remains the initial hardware validation target. Homepage Run executes all 63 cases across 25 layer types in catalog order; Stats for Nerds can select whole operations.
 The website controls a dedicated Android app. Every supported layer executes in
 ExecuTorch's Vulkan backend on the headset; the browser uses graphics only for its optional Three.js presentation.
 The native app also offers a 72 Hz OpenXR scene for paired rendering-impact tests.
@@ -47,7 +47,7 @@ they are not custom native kernel implementations. Candidate GLSL implementation
 | [transpose_copy/layer.py](transpose_copy/layer.py) | 2 |
 | [concat/layer.py](concat/layer.py) | 2 |
 
-`engine/` contains the native Android runner, build tooling, ADB controller,
+The sibling `engine/` directory contains the native Android runner, build tooling, ADB controller,
 report analysis, PostgreSQL setup, shared HTTP API, and engine tests. Both websites
 use this engine. Pinned toolchains and native dependency checkouts belong to this
 repository; the scene and tracing sources are contained in the engine itself.
@@ -62,15 +62,24 @@ From the repository root, with Docker running:
 
 ```sh
 uv sync --extra export --group dev
-uv run --extra export --group dev python -m app
+uv run --extra export --group dev python -m src
 ```
 
-The launcher creates an ignored, mode-0600 `layers/.env` containing a random
+The launcher creates an ignored, mode-0600 `engine/.env` containing a random
 database password, starts PostgreSQL 17, applies migrations, and opens
 [the local dashboard](http://localhost:8765). PostgreSQL listens only on
 127.0.0.1:5432; the controller listens only on 127.0.0.1:8765. Change
 `XRGPU_DB_PORT` in the generated `.env` if port 5432 is already occupied. The
 controller stays on the host because it needs access to the USB ADB connection.
+
+Startup first checks that Docker's engine responds within 10 seconds. PostgreSQL
+startup then has a 120-second limit (including any image download), with a
+60-second container-health wait. If Docker Desktop is still starting, wait for
+its engine to be running and retry. If it stays stuck, restart Docker Desktop;
+this interrupts other containers, so finish any active container work first.
+Container startup errors include Docker's diagnostic output. A port conflict
+can be resolved by selecting a free `XRGPU_DB_PORT` in `engine/.env`. Ctrl-C
+during startup cancels cleanly without a Python traceback.
 
 Use `--no-open` to suppress browser launch, `--port` to change the website port,
 and `--adb /path/to/adb` to select platform-tools. To use an existing database,
@@ -88,7 +97,7 @@ Only existing files in these known locations are selected; no downloads or PATH
 changes are needed. Custom installation locations can be selected explicitly:
 
 ```powershell
-uv run python -m app --adb "C:\Program Files\Meta Quest Developer Hub\resources\bin\adb.exe"
+uv run python -m src --adb "C:\Program Files\Meta Quest Developer Hub\resources\bin\adb.exe"
 ```
 
 An invalid explicit override reports an error without falling back to another
@@ -101,15 +110,15 @@ Prepare the repository's pinned Android toolchain and stock native dependencies.
 The exporter and controller use only the root uv environment.
 
 ```sh
-uv run --extra export --group dev python -m layers.engine.bootstrap_android
-uv run --extra export --group dev python -m layers.engine.prepare
-uv run --extra export --group dev python -m layers.engine.bootstrap_shaderc
+uv run --extra export --group dev python -m engine.bootstrap_android
+uv run --extra export --group dev python -m engine.prepare
+uv run --extra export --group dev python -m engine.bootstrap_shaderc
 uv run --extra export --group dev python -m layers.export
-uv run --extra export --group dev python -m layers.engine.build
+uv run --extra export --group dev python -m engine.build
 ```
 
-The output is `layers/.build/xrgpu-benchmarks.apk`, with checksums and revision
-metadata in `layers/.build/apk.json`. The dashboard automatically installs
+The output is `engine/.build/xrgpu-benchmarks.apk`, with checksums and revision
+metadata in `engine/.build/apk.json`. The dashboard automatically installs
 this matching APK on Run. Android Gradle dependencies may be downloaded on the
 first build. The app uses its own package, `org.xrgpu.benchmarks`, and a local
 debug signing key. Its debuggable build is necessary for ADB `run-as` access;
@@ -147,8 +156,9 @@ downloads. Never substitute an APK without regenerating its metadata.
 5. Optionally open **Advanced** to change the preset or enable XR impact for the
    entire suite. XR mode requires wearing the headset and keeping its scene focused.
 
-Quest 3 is the first validation target. Other headsets and glasses are unsupported in this version;
-the native runtime checks Vulkan support and the XR scene requires stereo views,
+Quest 3 is the first validation target. Other Android arm64 devices can now be probed
+and tested in isolation when their Vulkan capabilities meet the selected backend.
+Compatibility is not hardware validation. The optional Quest 3 XR scene requires stereo views,
 1440×1440 render targets per eye, and a reported 72 Hz refresh rate. An absent
 device is reported as absent; desktop performance is never substituted.
 
@@ -227,11 +237,11 @@ timings, correctness ranking, calibration-relative efficiency ranking, then
 expandable operation evidence. History and comparison sections are collapsed below.
 `#benchmark`, `#layers`, and `#runs` remain valid section links. Search/outcome
 filters affect displayed results; the Operations field changes the execution queue.
-See the [viewer guide](../app/stats_for_nerds/README.md).
+See the [viewer guide](../src/stats_for_nerds/README.md).
 
 Calibration runs automatically when no compatible profile exists. Failure leaves
 ordinary benchmarking available. Estimates remain unavailable for unsupported cost
-models or incompatible/invalid evidence. See [versioned measurement definitions](engine/MEASUREMENTS.md)
+models or incompatible/invalid evidence. See [versioned measurement definitions](../engine/MEASUREMENTS.md)
 for the 15-second/64-MiB limits, cache keys, timing boundaries and formulas.
 
 `GET /api/saved?limit=20&offset=0` returns `runs` and `next_offset` (null on the
@@ -259,7 +269,7 @@ overlap and cannot be added; hardware metadata cannot identify a physical unit.
 
 Native reports and progress are stored in app-private `files/runs/<run-id>/`.
 The host stores retrieved reports, job state and database receipts under
-`layers/.state/runs/`. Reports are saved locally before database submission.
+`engine/.state/runs/`. Reports are saved locally before database submission.
 The original native envelope is preserved as `native-report.json`; the downloaded
 report adds host-computed statistics, XR pair deltas, and the native envelope hash.
 Database outages leave reports pending for retry without rerunning GPU work.
@@ -282,10 +292,10 @@ traces, or cloud uploads are used.
 ## Tests
 
 ```sh
-uv run --extra export --group dev python -m pytest layers/engine/tests app/stats_for_nerds/tests -q
-uv run --extra export --group dev python -m pytest layers/engine/tests/test_layers.py -q
-XRGPU_TEST_POSTGRES=1 uv run --extra export --group dev python -m pytest layers/engine/tests/test_postgres.py -q
-node --test app/stats_for_nerds/tests/test_web.mjs
+uv run --extra export --group dev python -m pytest engine/tests src/stats_for_nerds/tests -q
+uv run --extra export --group dev python -m pytest engine/tests/test_layers.py -q
+XRGPU_TEST_POSTGRES=1 uv run --extra export --group dev python -m pytest engine/tests/test_postgres.py -q
+node --test src/stats_for_nerds/tests/test_web.mjs
 ```
 
 The NumPy/PyTorch oracle tests use the root environment installed by
@@ -333,3 +343,19 @@ Stats for Nerds now offers paired stock/stock and stock/candidate matmul experim
 individual dispatch evidence, shader provenance, and a GPU-timestamps-off latency mode.
 See [the kernel workflow](../kernels/README.md) for authoring, building, returning reports,
 and the device validation gates. These additions do not establish an on-device speedup.
+
+
+## Additional devices and resident matmul
+
+Stats for Nerds now includes capability inspection/profile downloads, backend selection,
+execution target attribution (including companion phones and compute pucks), and a
+Development workload suite. The standard catalog remains 63 cases; Development has
+80 cases and 26 operations. Its extra cases cover matmul shapes/seeds and synthetic
+MLP/attention segments. Both suites ship in the APK.
+
+The direct Vulkan resident matmul runner avoids per-sample host tensor transfers;
+its kernels and timing scope differ from ExecuTorch and are reported separately.
+See [Device support and hardware validation](../kernels/PORTABILITY.md) for building,
+negative controls, the local qualification commands, and remaining hardware gates.
+PostgreSQL migration 002 allows additional registered execution backends without
+rewriting existing reports.
