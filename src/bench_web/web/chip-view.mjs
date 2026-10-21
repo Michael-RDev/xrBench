@@ -68,7 +68,7 @@ export function renderChip(document,data,source='native'){
   $('chip-percent').textContent=data.percent+'%';$('chip-gauge').setAttribute('aria-valuenow',String(data.percent));
   $('chip-gauge').style.setProperty('--progress',data.percent+'%');
   $('chip-count').textContent=`${data.completed} / ${data.total} cases ${simulated?'simulated':'processed on device'}`;
-  $('chip-operation').textContent=data.current||data.error||(data.active?(simulated?'Preparing demo…':'Preparing native kernels…'):'Finished');
+  $('chip-operation').textContent=data.current||data.error||(data.stale?'Waiting for device':data.active?(simulated?'Preparing demo…':'Preparing native kernels…'):'Finished');
   $('chip-correctness').textContent=simulated?'Simulated correctness':data.current?`Correctness · ${data.correctness}`:'Native execution';
   $('chip-samples').textContent=`${data.samples} ${simulated?'synthetic ':''}samples`;
   for(const region of document.querySelectorAll('.chip-region')){

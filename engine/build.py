@@ -48,7 +48,7 @@ def build_environment(toolchain, pins):
     return sdk, ndk, env
 
 
-def build(jobs=4):
+def build(jobs=4, web=False):
     from engine.prepare import verify
     from engine import kernels
     verify()
@@ -61,6 +61,13 @@ def build(jobs=4):
             raise RuntimeError(f"Pinned dependency mismatch: {dep}")
     toolchain = ROOT / "artifacts/toolchain"
     sdk, ndk, env = build_environment(toolchain, pins)
+    if web:
+        required = ('XRBENCH_WEB_KEYSTORE', 'XRBENCH_WEB_STORE_PASSWORD', 'XRBENCH_WEB_KEY_ALIAS',
+                    'XRBENCH_WEB_KEY_PASSWORD', 'XRBENCH_WEB_VERSION_CODE', 'XRBENCH_WEB_CERT_SHA256')
+        if any(not env.get(name) for name in required):
+            raise RuntimeError('Web distribution requires the persistent signing credentials and version code documented in src/bench_web/README.md')
+        if not Path(env['XRBENCH_WEB_KEYSTORE']).is_file() or not env['XRBENCH_WEB_VERSION_CODE'].isdigit() or int(env['XRBENCH_WEB_VERSION_CODE']) < 1:
+            raise RuntimeError('Invalid web signing keystore or version code')
     bundle = build_dir / "bundle"
     manifest = json.loads((bundle / "manifest.json").read_text())
     if manifest["suite_revision"] != revision():
@@ -72,6 +79,7 @@ def build(jobs=4):
     source_paths += sorted(kernels.KERNELS.rglob("*.h"))
     source_paths += sorted((BASE / "backends").rglob("*.py"))
     source_paths += [BASE / "android/app/src/main/AndroidManifest.xml"]
+    source_paths += sorted((BASE / "android").glob('*.gradle')) + [BASE / 'android/app/build.gradle']
     source_paths += sorted(kernels.KERNELS.rglob("*.json")) + sorted(kernels.KERNELS.rglob("*.glslh"))
     identity = hashlib.sha256(b"".join(p.read_bytes() for p in source_paths if p.is_file())).hexdigest()
     dest = build_dir / "lib/arm64-v8a"
@@ -102,7 +110,8 @@ def build(jobs=4):
     shutil.copy2(loader, dest / "libopenxr_loader.so")
     shutil.copy2(next(ndk.glob("toolchains/llvm/prebuilt/*/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so")), dest)
     assets = build_dir / "assets/bundle"
-    if assets.exists(): shutil.rmtree(assets)
+    if assets.exists():
+        shutil.rmtree(assets)
     assets.mkdir(parents=True, exist_ok=True)
     for name in ["manifest.json", *manifest["files"]]:
         shutil.copy2(bundle / name, assets / name)
@@ -111,7 +120,7 @@ def build(jobs=4):
     shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", build_dir / "assets")
     STATE.mkdir(exist_ok=True)
     key = STATE / "debug.keystore"
-    if not key.exists():
+    if not web and not key.exists():
         keytool = Path(env["JAVA_HOME"]) / ("bin/keytool.exe" if os.name == "nt" else "bin/keytool")
         run([keytool, "-genkeypair", "-keystore", key, "-storepass", "android", "-keypass", "android",
              "-alias", "androiddebugkey", "-keyalg", "RSA", "-keysize", "2048", "-validity", "10000",
@@ -121,18 +130,28 @@ def build(jobs=4):
     # The existing Gradle cache is a read-only dependency source for offline builds.
     if (ROOT / "artifacts/cache/gradle/caches").exists():
         env["GRADLE_RO_DEP_CACHE"] = str(ROOT / "artifacts/cache/gradle/caches")
-    run([gradle, "--no-daemon", "-p", BASE / "android", ":app:assembleDebug"], env=env)
-    apk = build_dir / "xrgpu-benchmarks.apk"
-    shutil.copy2(BASE / "android/app/build/outputs/apk/debug/app-debug.apk", apk)
+    variant = 'web' if web else 'debug'
+    run([gradle, "--no-daemon", "-p", BASE / "android", ':app:assemble' + variant.title()], env=env)
+    apk = build_dir / ('xrgpu-benchmarks-web.apk' if web else 'xrgpu-benchmarks.apk')
+    shutil.copy2(BASE / f'android/app/build/outputs/apk/{variant}/app-{variant}.apk', apk)
+    if web:
+        signer = sdk / 'build-tools/35.0.0' / ('apksigner.bat' if os.name == 'nt' else 'apksigner')
+        verification = subprocess.check_output([str(signer), 'verify', '--print-certs', str(apk)], env=env, text=True)
+        match = re.search(r'Signer #1 certificate SHA-256 digest: ([0-9a-fA-F]+)', verification)
+        if not match or match[1].lower() != env['XRBENCH_WEB_CERT_SHA256'].lower():
+            raise RuntimeError('Web runner signing certificate differs from the pinned distribution identity')
     metadata = dict(apk_sha256=hashlib.sha256(apk.read_bytes()).hexdigest(), suite_revision=revision(),
-                    runner_revision=identity, runtime_revision=pins["executorch"]["commit"], package="org.xrgpu.benchmarks",
+                    runner_revision=identity, runtime_revision=pins["executorch"]["commit"], package="org.xrgpu.benchmarks.web" if web else "org.xrgpu.benchmarks",
                     device_profiles_version=1, backends=["executorch_vulkan","vulkan_resident","executorch_cpu","cpu_resident"], kernel_experiments_version=1, candidate_revision=kernels.source_identity())
-    save(build_dir / "apk.json", metadata)
+    if web:
+        metadata.update(version_code=int(env['XRBENCH_WEB_VERSION_CODE']), signing_certificate_sha256=match[1].lower())
+    save(build_dir / ('web-apk.json' if web else 'apk.json'), metadata)
     print(f"Native benchmark APK: {apk}")
 
 
 if __name__ == "__main__":
     parser=argparse.ArgumentParser(description="Build the dedicated layer APK using the repository's pinned Android toolchain.")
     parser.add_argument("--jobs",type=int,default=4)
+    parser.add_argument('--web', action='store_true', help='Build the signed, separately installed browser runner')
     args=parser.parse_args()
-    build(args.jobs)
+    build(args.jobs, web=args.web)

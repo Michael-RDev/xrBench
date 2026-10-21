@@ -24,7 +24,11 @@ def windows_host_cmake(source):
     source = source.replace('if(CMAKE_CROSSCOMPILING AND ${CMAKE_SYSTEM_PROCESSOR} MATCHES "ARM64|arm64|aarch64")',
                             'if(CMAKE_GENERATOR MATCHES "Visual Studio" AND CMAKE_CROSSCOMPILING AND ${CMAKE_SYSTEM_PROCESSOR} MATCHES "ARM64|arm64|aarch64")')
     return source.replace('set(_executorch_external_project_additional_args)\nelse()',
-                          'set(_executorch_external_project_additional_args CMAKE_GENERATOR "Visual Studio 17 2022" CMAKE_GENERATOR_PLATFORM x64)\nelse()')
+                          'if("$ENV{XRBENCH_HOST_GENERATOR}" STREQUAL "Ninja")\n'
+                          '    set(_executorch_external_project_additional_args CMAKE_GENERATOR "Ninja" CMAKE_CACHE_ARGS "-DCMAKE_BUILD_TYPE:STRING=Release")\n'
+                          '  else()\n'
+                          '    set(_executorch_external_project_additional_args CMAKE_GENERATOR "Visual Studio 17 2022" CMAKE_GENERATOR_PLATFORM x64)\n'
+                          '  endif()\nelse()')
 
 
 def shader_newlines(source):
@@ -89,7 +93,16 @@ def prepare():
     cmake = source / "third-party/CMakeLists.txt"
     original = git("show", "HEAD:third-party/CMakeLists.txt", cwd=source).stdout
     expected = windows_host_cmake(original)
-    if cmake.read_text() == original:
+    # Accept only the previous generated host-tool patch when upgrading it.
+    previous_ninja = expected.replace(' CMAKE_CACHE_ARGS "-DCMAKE_BUILD_TYPE:STRING=Release"', '')
+    previous = previous_ninja.replace(
+        'if("$ENV{XRBENCH_HOST_GENERATOR}" STREQUAL "Ninja")\n'
+        '    set(_executorch_external_project_additional_args CMAKE_GENERATOR "Ninja")\n'
+        '  else()\n'
+        '    set(_executorch_external_project_additional_args CMAKE_GENERATOR "Visual Studio 17 2022" CMAKE_GENERATOR_PLATFORM x64)\n'
+        '  endif()',
+        'set(_executorch_external_project_additional_args CMAKE_GENERATOR "Visual Studio 17 2022" CMAKE_GENERATOR_PLATFORM x64)')
+    if cmake.read_text() in (original, previous, previous_ninja):
         cmake.write_text(expected)
     elif cmake.read_text() != expected:
         raise RuntimeError("Unexpected dependency CMake changes; refusing to overwrite")
@@ -121,7 +134,8 @@ def install_kernel_hooks():
         legacy = expected.replace('kernel_name = std::string(xrbench::incorrect_kernel ? "xrbench_incorrect_" : "xrbench_") + base;', 'kernel_name = "xrbench_" + base;')
         if path.read_text() not in (original, previous, expected, legacy):
             raise RuntimeError("Refusing to overwrite unrecognized dependency edits: " + relative)
-        if path.read_text() != expected:path.write_text(expected)
+        if path.read_text() != expected:
+            path.write_text(expected)
 
 
 if __name__ == "__main__":

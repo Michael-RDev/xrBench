@@ -57,7 +57,7 @@ target_compile_definitions(xrgpu_benchmarks PRIVATE XR_USE_PLATFORM_ANDROID XR_U
   XRGPU_CANDIDATE_TILE_M=${CANDIDATE_TILE_M}
   XRGPU_ET_REVISION="${XRGPU_ET_REVISION}" XRGPU_RUNNER_REVISION="${XRGPU_RUNNER_REVISION}")
 target_link_libraries(xrgpu_benchmarks PRIVATE executorch extension_module extension_tensor portable_ops_lib
-  vulkan_backend openxr_loader android log EGL GLESv3 dl vulkan)
+  vulkan_backend openxr_loader android log EGL GLESv3 dl)
 target_link_options(xrgpu_benchmarks PRIVATE "-Wl,-u,ANativeActivity_onCreate" "-Wl,-z,max-page-size=16384")
 
 # A separate shared object ensures CPU execution can load without Vulkan/OpenXR.

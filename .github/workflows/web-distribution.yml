@@ -1,0 +1,72 @@
+name: Browser benchmark distribution
+on:
+  workflow_dispatch:
+  push:
+    tags: ['web-v*']
+permissions:
+  contents: read
+jobs:
+  distribution:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      ANDROID_HOME: ${{ github.workspace }}/artifacts/toolchain/android-sdk
+      ANDROID_NDK: ${{ github.workspace }}/artifacts/toolchain/android-sdk/ndk/28.2.13676358
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.8.22'
+          python-version: '3.12'
+          enable-cache: true
+      - name: Install pinned dependencies
+        run: |
+          npm ci
+          uv sync --locked --extra export --group dev
+      - name: Browser and backend regression tests
+        run: |
+          npm test
+          uv run --group dev python -m pytest -q
+      - name: Prepare Android and native dependencies
+        run: |
+          uv run --extra export --group dev python -m engine.bootstrap_android
+          uv run --extra export --group dev python -m engine.prepare
+          uv run --extra export --group dev python -m engine.bootstrap_shaderc
+      - name: Export and verify workloads
+        run: |
+          uv run --extra export --group dev python -m layers.export
+          uv run --extra export --group dev python -m engine.verify_cpu
+      - name: Build the signed browser runner
+        env:
+          XRBENCH_WEB_KEYSTORE_BASE64: ${{ secrets.XRBENCH_WEB_KEYSTORE_BASE64 }}
+          XRBENCH_WEB_STORE_PASSWORD: ${{ secrets.XRBENCH_WEB_STORE_PASSWORD }}
+          XRBENCH_WEB_KEY_ALIAS: ${{ secrets.XRBENCH_WEB_KEY_ALIAS }}
+          XRBENCH_WEB_KEY_PASSWORD: ${{ secrets.XRBENCH_WEB_KEY_PASSWORD }}
+          XRBENCH_WEB_CERT_SHA256: ${{ vars.XRBENCH_WEB_CERT_SHA256 }}
+          XRBENCH_WEB_VERSION_CODE: ${{ github.run_number }}
+        run: |
+          test -n "$XRBENCH_WEB_KEYSTORE_BASE64" || { echo 'Configure persistent web runner signing secrets before publishing.'; exit 1; }
+          export XRBENCH_WEB_KEYSTORE="$RUNNER_TEMP/xrbench-web.keystore"
+          umask 077
+          printf '%s' "$XRBENCH_WEB_KEYSTORE_BASE64" | base64 --decode > "$XRBENCH_WEB_KEYSTORE"
+          trap 'rm -f "$XRBENCH_WEB_KEYSTORE"' EXIT
+          uv run --extra export --group dev python -m engine.build --web
+      - name: Package static website and matched runner
+        run: |
+          npm run build
+          node --experimental-vm-modules scripts/verify-web.mjs dist
+      - name: Upload deployable distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: xrbench-web-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14

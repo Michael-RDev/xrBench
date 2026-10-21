@@ -4,6 +4,7 @@ import math
 import os
 import re
 import statistics
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -28,7 +29,16 @@ def save(path, value):
         stream.write(canonical(value))
         stream.flush()
         os.fsync(stream.fileno())
-    temporary.replace(path)
+    for attempt in range(6):
+        try:
+            temporary.replace(path)
+            return
+        except PermissionError as error:
+            # Windows sync/indexing tools may briefly deny replacement of an
+            # existing state file. Keep the old file intact and bound the wait.
+            if getattr(error, "winerror", None) not in (5, 32, 33) or attempt == 5:
+                raise
+            time.sleep(.02 * 2**attempt)
 
 
 def distribution(values):

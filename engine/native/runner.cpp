@@ -8,7 +8,6 @@
 #include <executorch/extension/tensor/tensor.h>
 #include <executorch/runtime/platform/runtime.h>
 #include <jni.h>
-#include <vulkan/vulkan.h>
 #include <dlfcn.h>
 #include <cstring>
 #include <memory>
@@ -32,13 +31,13 @@ void fail(JNIEnv* env,const std::exception& error) {
   env->ThrowNew(env->FindClass("java/lang/IllegalStateException"),error.what());
 }
 struct Session {
-  xrgpu::Trace* trace;
+  xrgpu::Trace* trace=nullptr;
   std::unique_ptr<Module> model;
   double load_ms=0,model_ms=0,timestamp_scale=1;
   Json shape=Json::array();
   bool candidate=false,selected=false,detailed=true;
   std::string control="none";
-  explicit Session(const std::string& path,const std::string& variant,bool trace,const std::string& test):candidate(variant=="candidate"),detailed(trace),control(test){
+  explicit Session(const std::string& path,const std::string& variant,bool detailedTrace,const std::string& test):candidate(variant=="candidate"),detailed(detailedTrace),control(test){
     if(control!="none"&&control!="incorrect"&&control!="slower")throw std::runtime_error("Invalid kernel validation control");
     xrbench::incorrect_kernel=candidate&&control=="incorrect";
     if(variant!="stock"&&variant!="candidate")throw std::runtime_error("Unknown kernel variant");

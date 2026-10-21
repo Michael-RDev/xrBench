@@ -9,3 +9,9 @@ Copies of upstream license texts are in licenses/ and bundled with the APK.
 The Android NDK libc++ runtime includes the NDK notices and LLVM license exceptions.
 Android tooling, Gradle, CMake, shaderc, Python packages, and JSON-java retain their
 own licenses and are installed as local build/test dependencies.
+
+The hosted homepage bundles Tango ADB (`@yume-chan/adb`, its WebUSB transport and
+browser credential store) and their dependencies. Versions and integrity hashes
+are pinned in package-lock.json. The static distribution includes license texts
+and package metadata for the bundled libraries under licenses/; Tango ADB is MIT
+licensed. esbuild, jsdom and fake-indexeddb are build/test dependencies only.

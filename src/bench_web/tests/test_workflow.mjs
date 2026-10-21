@@ -27,6 +27,7 @@ async function page(kind,report=null,stateOverrides={},options={}){
   const html=await readFile(new URL(`src/${pretty?'bench_web':'stats_for_nerds'}/web/index.html`,root),'utf8');
   const dom=new JSDOM(html,{url:'http://localhost:8765/'+(pretty?'':'stats/')+(report?'?run='+id:''),runScripts:'outside-only'});
   const window=dom.window,calls=[],intervals=new Map(),timeouts=new Map(),faults={start:false,status:false,...options.faults},downloads=[],scrolls=[];
+  if(options.hosted)window.document.documentElement.dataset.transport='webusb';
   let time=Date.now(),timerId=0,nativeStarts=0,frameTime=0;const frames=new Map();window.Date.now=()=>time;window.structuredClone=structuredClone;
   let hidden=false;Object.defineProperty(window.document,'hidden',{get:()=>hidden});
   window.Blob=Blob;window.URL.createObjectURL=blob=>{downloads.push(blob);return 'blob:fixture';};window.URL.revokeObjectURL=()=>{};
@@ -47,7 +48,7 @@ async function page(kind,report=null,stateOverrides={},options={}){
     let value;
     if(path==='/api/session')value={token:'fixture-token'};
     else if(path==='/api/status'){
-      if(state.benchmark_sessions?.length&&fixtureOptions.syncSession!==false){const s=state.benchmark_sessions[0];s.phases[0].run=state.jobs[0];s.status=state.jobs[0].status;s.cancel_requested=state.jobs[0].cancel_requested;s.phases[0].status=s.status;}
+      if(state.benchmark_sessions?.length&&state.jobs.length&&fixtureOptions.syncSession!==false){const s=state.benchmark_sessions[0];s.phases[0].run=state.jobs[0];s.status=state.jobs[0].status;s.cancel_requested=state.jobs[0].cancel_requested;s.phases[0].status=s.status;}
       value=structuredClone(state);
     }
     else if(path==='/api/device-catalog')value=devicesCatalog;
@@ -70,10 +71,19 @@ async function page(kind,report=null,stateOverrides={},options={}){
     }else if(path==='/api/watch'){
       if(faults.watchGate&&body.action==='enable')await faults.watchGate;
       state.watch_status=body.action==='disable'?[]:[{owner:body.owner,serial:body.serial,state:'Watching for changes',run_id:null}];value=state.watch_status;
-    }else if(path.endsWith('/stop')){state.jobs[0].cancel_requested=true;if(path.includes('benchmark-sessions')){state.benchmark_sessions[0].cancel_requested=true;value=state.benchmark_sessions[0];}else value=state.jobs[0];}
+    }else if(path.endsWith('/stop')){if(state.jobs[0])state.jobs[0].cancel_requested=true;if(path.includes('benchmark-sessions')){state.benchmark_sessions[0].cancel_requested=true;value=state.benchmark_sessions[0];}else value=state.jobs[0];}
     else if(path.endsWith('/report'))value=report;
     else throw Error('Unexpected API request '+path);
     return {ok:true,json:async()=>value};
+  };
+  window.__browserService={
+    request:async(path,body)=>(await window.fetch(path,{body:body===undefined?undefined:JSON.stringify(body)})).json(),
+    start:async(serial,request_id)=>{
+      const s=await (await window.fetch('/api/benchmark-sessions',{body:JSON.stringify({serial,request_id})})).json();
+      if(options.preparing){state.jobs=[];s.status='starting';s.message='Downloading headset runner…';for(const p of s.phases){delete p.run;p.status='pending';}}
+      return s;
+    },
+    exportSession:async()=>({reports:[report]}),dispose:()=>{},
   };
   window.setInterval=callback=>{const key=++timerId;intervals.set(key,callback);return key;};
   window.clearInterval=key=>intervals.delete(key);
@@ -82,6 +92,9 @@ async function page(kind,report=null,stateOverrides={},options={}){
   const cache=new Map(),context=dom.getInternalVMContext();
   async function module(path){
     if(cache.has(path))return cache.get(path);
+    if(path==='/bench/browser/entry.mjs'){
+      const mod=new vm.SourceTextModule('export const createBrowserService=()=>globalThis.__browserService;',{context,identifier:path});cache.set(path,mod);await mod.link(()=>{});return mod;
+    }
     const file=paths[path];if(!file)throw Error('Unknown module '+path);
     let source=path==='/bench/features.mjs'&&options.demoEnabled===false?'export const ENABLE_SMOKE_DEMO=false;':await readFile(new URL(file,root),'utf8');
     if(options.rendererFailure&&path==='/bench/ascii-headset.mjs')source=source.replace('createRenderer = createAsciiRenderer', "createRenderer = () => {throw Error('Unavailable graphics');}");
@@ -101,6 +114,23 @@ async function page(kind,report=null,stateOverrides={},options={}){
       for(const [key,callback] of [...intervals])if(intervals.has(key))await callback();await drain();
     }};
 }
+
+test('hosted Run ignores local APK setup and Stop remains available while downloading',async()=>{
+  const p=await page('bench',null,{devices:[],apk_ready:false},{hosted:true,preparing:true});
+  try{
+    const doc=p.window.document;
+    assert.equal(doc.getElementById('stats-link').hidden,true);
+    doc.getElementById('run').click();doc.getElementById('run').click();await drain();
+    assert.equal(p.calls.filter(c=>c.path==='/api/benchmark-sessions'&&c.body).length,1);
+    assert.equal(doc.getElementById('run-label').textContent,'Stop');
+    assert.equal(doc.getElementById('run').disabled,false);
+    assert.match(doc.getElementById('run-status').textContent,/Downloading headset runner/);
+    assert.equal(doc.getElementById('setup-help').hidden,true);
+    doc.getElementById('run').click();await drain();
+    assert.equal(p.calls.filter(c=>c.path.endsWith('/stop')).length,1);
+    assert.equal(doc.getElementById('run-label').textContent,'Stopping…');
+  }finally{p.close();}
+});
 
 test('native progress and case evidence remain available without visualization components',async()=>{
   const p=await page('bench');

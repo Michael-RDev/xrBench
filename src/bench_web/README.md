@@ -2,9 +2,132 @@
 
 The local homepage keeps the ivory, graphite and sage palette. Run creates an
 isolated Smoke session: all 63 standard CPU cases, followed by all 63 standard GPU
-cases. The controller owns this sequence and reserves the selected device across
-both phases. Browsers only observe native evidence. Stats for Nerds retains
+cases. The active controller owns this sequence and reserves the selected device across
+both phases. Browsers display native evidence. Stats for Nerds retains
 single-backend controls, development workloads and custom kernel experiments.
+
+## Browser distribution
+
+The hosted build uses Tango ADB's WebUSB daemon transport directly from desktop
+Chrome/Edge. It does not contact a localhost API and does not need Python, Docker,
+PostgreSQL, a desktop ADB executable, or compilation tools on a visitor's computer.
+The local Python application is retained for development and Stats for Nerds.
+Its existing APIs and local build workflow remain available.
+
+On the hosted site, **Run** opens the USB device chooser if needed, authenticates,
+downloads and verifies the matched APK, installs it, probes native capabilities,
+and executes the same standard 63 CPU cases followed by 63 GPU cases. Installation
+is skipped when the headset already has that exact APK. The user must enable
+headset developer mode, use a data cable, grant browser USB access, and approve
+USB debugging inside the headset. Windows drivers and Linux USB permissions can
+still prevent WebUSB access; no universal driver-free claim is made. Another ADB
+process or tab holding the USB interface must release it before the browser can
+connect. The website never kills other programs or uninstalls an incompatible APK.
+
+The distributed app ID is `org.xrgpu.benchmarks.web`, separate from the developer
+app. Its full activity name remains `org.xrgpu.benchmarks.MainActivity`. It is
+intentionally debuggable because the existing authenticated ADB protocol uses
+`run-as` for app-private command, progress, cancellation and report files. This is
+a sideloaded benchmark runner, not a store-release build. Native numerical kernels
+and report schema version 2 are unchanged.
+
+`browser/controller.mjs` owns the hosted CPU/GPU sequence. It persists session
+identities and launch intent in IndexedDB before sending commands, holds a Web
+Lock across both phases, and recovers existing reports after refresh or USB loss.
+It never repeats an uncertain native launch. Closing the tab releases USB; the
+current native phase may finish on the headset, but the next phase waits for the
+page to reconnect and validate the final report. Stop is durable, including
+between phases and while disconnected. Download/install preparation is abortable.
+If the native process exits without a final report, the browser marks that run
+failed and preserves its validated partial evidence and any completed phase.
+It reads the report after checking process liveness so a successful final report
+still wins over process exit. A new benchmark requires another explicit Run.
+Keep the headset awake with the benchmark app visible during measurement;
+headset standby or leaving the app cancels the native activity and saves partial
+results, with recovery guidance shown on the page.
+Browser storage must remain enabled for recovery. Clearing it removes local run
+history and authentication credentials. No reports or USB credentials are uploaded.
+**Download results JSON** exports both native reports and session state.
+
+### Build and sign (maintainers only)
+
+`.github/workflows/web-distribution.yml` runs on manual dispatch or `web-v*` tags.
+It tests the code, prepares pinned Linux build tools, exports and verifies workloads,
+builds the signed Android runner, bundles browser dependencies, and uploads a
+complete static website artifact. It does not publish a production hostname.
+
+Provision one persistent signing keystore and keep it backed up. Configure these
+repository secrets before running the distribution workflow:
+
+- `XRBENCH_WEB_KEYSTORE_BASE64`: base64 of that keystore.
+- `XRBENCH_WEB_STORE_PASSWORD`, `XRBENCH_WEB_KEY_ALIAS`, `XRBENCH_WEB_KEY_PASSWORD`.
+- Repository variable `XRBENCH_WEB_CERT_SHA256`: the signing certificate's lowercase
+  SHA-256 digest, without colons. The build verifies the APK against this identity.
+
+The workflow uses its increasing run number for Android's version code. Never
+replace the signing key or reset the version sequence for an existing distribution.
+No random key or development key is substituted when signing configuration is
+missing. The keystore is only decoded into the CI temporary directory, is removed
+after the build, and is not included in the uploaded artifact.
+
+To build locally on a configured maintainer machine, set `XRBENCH_WEB_KEYSTORE` to
+the absolute keystore path, the password/alias variables above, the certificate
+digest, and a positive `XRBENCH_WEB_VERSION_CODE`. After preparing the native
+toolchain and workload exports, run:
+
+```sh
+uv run --extra export --group dev python -m engine.build --web
+npm ci
+npm run build
+node --experimental-vm-modules scripts/verify-web.mjs dist
+```
+
+The output includes `index.html`, the bundled `bench/` assets, third-party licenses,
+and `runner/manifest.json` plus a checksum-named APK. The manifest contains protocol
+version 1, package/activity IDs, platform constraints, signing provenance, revisions,
+catalogs, and CPU/GPU configurations generated with `Controller.configuration`.
+Packaging fails if the signed APK is absent, corrupt, or mismatched with the suite.
+`XRBENCH_PYTHON` can select the Python interpreter used by the packaging command.
+
+Serve the entire distribution from one HTTPS origin, at the root or under a path
+prefix. Publish the manifest, bundle and APK together; retain immutable APK URLs
+while older sessions may need recovery. Do not cache `runner/manifest.json` or
+`index.html` indefinitely. `_headers` provides the CSP, USB Permissions Policy and
+other response headers for hosts supporting that file; configure equivalent
+headers elsewhere. Run the site as a top-level page. No CDN scripts or cross-origin
+APK URLs are needed. Hosted navigation omits the local Stats for Nerds application.
+
+For a local preview of the packaged release, `uv run python -m src` serves only
+`dist/` on localhost port 8765. It starts neither desktop ADB nor PostgreSQL.
+Chrome permits WebUSB on the localhost secure context; remote hosting requires
+HTTPS. `uv run python -m src --developer` opens the existing developer application
+on port 8766, including Stats for Nerds and its local APIs.
+
+### Verification and release qualification
+
+`npm test` covers the browser transport, controller, storage, frontend and demo.
+`python -m pytest` includes cross-language configuration, identity, validation and
+summary fixtures and a production-bundle execution test with no localhost/API
+requests. Tests use explicitly synthetic APK bytes and native evidence; those
+artifacts under `artifacts/` are never deployable releases or hardware proof.
+
+Before qualifying a release, use its actual signed APK and hosted bundle on a
+clean computer with a Quest 3, then a second supported Android device. Record OS,
+browser, headset firmware, driver requirements, release checksum and exported
+native reports. Verify first install, repeat runs, updates, permissions, multiple
+devices, occupied USB interfaces, Stop during preparation and between phases,
+refresh, unplug/reconnect, and cancellation while disconnected. A completed browser
+fixture does not qualify physical execution or establish driver-free support.
+
+The signed version-3 distribution was exercised on a real Quest 3 using Windows
+build 26200 and desktop Chrome on 2026-10-20. Its static preview completed all
+126 cases in about 3 minutes 16 seconds: CPU 63 passed; GPU 61 passed and 2 failed
+correctness (`gelu_tokens`, `conv2d_grouped`). Failed cases have no accepted timing
+samples. Browser installation, updates, reuse, refresh recovery, exclusive tab
+ownership, cancellation and JSON download were observed. Python and browser
+validators agreed on the downloaded reports and summaries. This was a configured
+maintainer computer using the localhost secure context; clean-computer driver
+qualification, public HTTPS testing and a second device remain outstanding.
 
 ## Device and processor identity
 
@@ -53,10 +176,10 @@ no idle movement or cursor avoidance, but permits the user-triggered reveal.
 Rendering failures retain readable diagnostics and Run/Stop controls. On phones,
 the action row remains visible while scrolling through the chip.
 
-Stats for Nerds is available only through its explicitly named navigation link.
+In the local developer application, Stats for Nerds is available through its named navigation link.
 Connection, USB authorization, unsupported hardware, service errors and missing
 native APK guidance are handled inline with Retry. The local toolchain and built
-APK remain host prerequisites; the homepage does not invoke builds. The existing
+APK remain developer-host prerequisites; the local homepage does not invoke builds. The existing
 session controller installs the APK, checks capabilities, and runs CPU then GPU.
 
 ## Optional device demo
@@ -74,8 +197,8 @@ To disable the entire demo, set `ENABLE_SMOKE_DEMO = false` in
 The component reads the existing device and workload catalogs but keeps all
 synthetic connection, progress, and results state in memory. It never sends POST
 requests, launches hardware workloads, saves reports, or puts demo IDs in URLs or
-browser storage. All models share the same illustrative sample timings. A local
-service is needed to serve the page and catalogs; a device and built APK are not.
+browser storage. All models share the same illustrative sample timings. The demo
+uses the hosted catalogs or local developer service; no device is needed.
 Catalog failures offer retry. Native activity prevents demo entry and takes over
 the view if a real run appears while the demo is open.
 
@@ -107,11 +230,12 @@ uv run --extra export --group dev python -m layers.export
 uv run --extra export --group dev python -m engine.verify_cpu
 uv run --extra export --group dev python -m engine.build
 uv run --group dev python -m pytest -q
-uv run python -m src
+uv run python -m src --developer
 ```
 
-Both web interfaces are buildless. Host CPU correctness
+Both local web interfaces are buildless; the hosted distribution uses the bundler described above. Host CPU correctness
 covers both the 63 standard and 17 development cases using the shared references.
-Browser fixtures test presentation only and must not be submitted as qualification evidence. Quest 3 and a second Android
-XR device remain required for physical qualification; neither was attached during
-this implementation. See [hardware qualification](../../kernels/PORTABILITY.md).
+Browser fixtures use synthetic evidence and must not be submitted as hardware qualification.
+The Quest 3 observations above do not qualify a second Android XR device or establish
+driver-free support on a clean computer.
+See [hardware qualification](../../kernels/PORTABILITY.md).

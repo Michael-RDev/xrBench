@@ -1,5 +1,5 @@
 #include "capabilities.h"
-#include <vulkan/vulkan.h>
+#include "vulkan_dispatch.h"
 #include <vector>
 #include <stdexcept>
 namespace xrgpu {
@@ -12,23 +12,23 @@ Json capabilities() {
   try {
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};app.apiVersion=VK_API_VERSION_1_1;
     VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};info.pApplicationInfo=&app;
-    if(vkCreateInstance(&info,nullptr,&instance)!=VK_SUCCESS)throw std::runtime_error("Vulkan 1.1 instance unavailable");
-    uint32_t n=0;if(vkEnumeratePhysicalDevices(instance,&n,nullptr)!=VK_SUCCESS||!n)throw std::runtime_error("No Vulkan physical device");
-    std::vector<VkPhysicalDevice> devices(n);if(vkEnumeratePhysicalDevices(instance,&n,devices.data())!=VK_SUCCESS)throw std::runtime_error("Device enumeration failed");
+    if(xrgpu::vulkan_dispatch().vkCreateInstance(&info,nullptr,&instance)!=VK_SUCCESS)throw std::runtime_error("Vulkan 1.1 instance unavailable");
+    uint32_t n=0;if(xrgpu::vulkan_dispatch().vkEnumeratePhysicalDevices(instance,&n,nullptr)!=VK_SUCCESS||!n)throw std::runtime_error("No Vulkan physical device");
+    std::vector<VkPhysicalDevice> devices(n);if(xrgpu::vulkan_dispatch().vkEnumeratePhysicalDevices(instance,&n,devices.data())!=VK_SUCCESS)throw std::runtime_error("Device enumeration failed");
     // Do not infer cross-backend device selection on multi-GPU systems.
     const bool singleDevice=devices.size()==1;out["physical_device_count"]=devices.size();
-    auto physical=devices[0];VkPhysicalDeviceProperties p{};vkGetPhysicalDeviceProperties(physical,&p);
-    VkPhysicalDeviceFeatures f{};vkGetPhysicalDeviceFeatures(physical,&f);
-    vkGetPhysicalDeviceQueueFamilyProperties(physical,&n,nullptr);
-    std::vector<VkQueueFamilyProperties> queues(n);vkGetPhysicalDeviceQueueFamilyProperties(physical,&n,queues.data());
+    auto physical=devices[0];VkPhysicalDeviceProperties p{};xrgpu::vulkan_dispatch().vkGetPhysicalDeviceProperties(physical,&p);
+    VkPhysicalDeviceFeatures f{};xrgpu::vulkan_dispatch().vkGetPhysicalDeviceFeatures(physical,&f);
+    xrgpu::vulkan_dispatch().vkGetPhysicalDeviceQueueFamilyProperties(physical,&n,nullptr);
+    std::vector<VkQueueFamilyProperties> queues(n);xrgpu::vulkan_dispatch().vkGetPhysicalDeviceQueueFamilyProperties(physical,&n,queues.data());
     int family=-1;for(uint32_t i=0;i<n;i++)if(queues[i].queueCount&&(queues[i].queueFlags&VK_QUEUE_COMPUTE_BIT)){family=i;break;}
     Json extensions=Json::array();n=0;
-    if(vkEnumerateDeviceExtensionProperties(physical,nullptr,&n,nullptr)==VK_SUCCESS){
+    if(xrgpu::vulkan_dispatch().vkEnumerateDeviceExtensionProperties(physical,nullptr,&n,nullptr)==VK_SUCCESS){
       std::vector<VkExtensionProperties> e(n);
-      if(vkEnumerateDeviceExtensionProperties(physical,nullptr,&n,e.data())==VK_SUCCESS)for(auto& x:e)extensions.push_back(x.extensionName);
+      if(xrgpu::vulkan_dispatch().vkEnumerateDeviceExtensionProperties(physical,nullptr,&n,e.data())==VK_SUCCESS)for(auto& x:e)extensions.push_back(x.extensionName);
     }
     VkImageFormatProperties image{};
-    bool texture=vkGetPhysicalDeviceImageFormatProperties(physical,VK_FORMAT_R32G32B32A32_SFLOAT,VK_IMAGE_TYPE_3D,
+    bool texture=xrgpu::vulkan_dispatch().vkGetPhysicalDeviceImageFormatProperties(physical,VK_FORMAT_R32G32B32A32_SFLOAT,VK_IMAGE_TYPE_3D,
       VK_IMAGE_TILING_OPTIMAL,VK_IMAGE_USAGE_STORAGE_BIT|VK_IMAGE_USAGE_SAMPLED_BIT,0,&image)==VK_SUCCESS;
     bool timestamps=family>=0&&queues[family].timestampValidBits>0&&p.limits.timestampPeriod>0;
     out.update({{"vulkan",true},{"gpu",p.deviceName},{"vendor_id",p.vendorID},{"device_id",p.deviceID},
@@ -49,7 +49,7 @@ Json capabilities() {
           "Required Vulkan version, single physical device, compute queue, texture format or workgroup limits unavailable"}};
     }
   } catch(const std::exception& e) {out["reason"]=e.what();}
-  if(instance)vkDestroyInstance(instance,nullptr);
+  if(instance)xrgpu::vulkan_dispatch().vkDestroyInstance(instance,nullptr);
   for(const auto& name:{"executorch_vulkan","vulkan_resident"})if(!out["backends"].contains(name))
     out["backends"][name]={{"compatible",false},{"status","unsupported"},{"reason",out.value("reason","Vulkan unavailable")}};
   return out;

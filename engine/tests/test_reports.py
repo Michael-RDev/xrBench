@@ -70,6 +70,55 @@ def test_atomic_write_keeps_previous_report_on_failure(report,tmp_path,monkeypat
     assert json.loads(path.read_text())==report
 
 
+@pytest.mark.parametrize("winerror", [5, 32, 33])
+def test_atomic_write_recovers_from_temporary_windows_lock(tmp_path, monkeypatch, winerror):
+    from pathlib import Path
+    from engine import reports
+
+    path = tmp_path / "report.json"
+    save(path, {"previous": True})
+    replace = Path.replace
+    waits = []
+
+    def locked_once(source, target):
+        if not waits:
+            assert json.loads(path.read_text()) == {"previous": True}
+            error = PermissionError("File temporarily locked")
+            error.winerror = winerror
+            raise error
+        return replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", locked_once)
+    monkeypatch.setattr(reports.time, "sleep", waits.append)
+    save(path, {"replacement": True})
+    assert json.loads(path.read_text()) == {"replacement": True}
+    assert waits == [.02]
+    assert not path.with_suffix(".json.tmp").exists()
+
+
+@pytest.mark.parametrize("winerror", [5, None])
+def test_atomic_write_permission_failure_is_bounded(tmp_path, monkeypatch, winerror):
+    from pathlib import Path
+    from engine import reports
+
+    path = tmp_path / "report.json"
+    save(path, {"previous": True})
+    waits = []
+    error = PermissionError("Replacement denied")
+    if winerror is not None:
+        error.winerror = winerror
+
+    def denied(*args):
+        raise error
+
+    monkeypatch.setattr(Path, "replace", denied)
+    monkeypatch.setattr(reports.time, "sleep", waits.append)
+    with pytest.raises(PermissionError):
+        save(path, {"replacement": True})
+    assert json.loads(path.read_text()) == {"previous": True}
+    assert waits == ([.02, .04, .08, .16, .32] if winerror == 5 else [])
+
+
 def test_optional_diagnostics_are_accounted_and_legacy_reports_remain_valid(report):
     validate(report)
     report['diagnostics']=dict(version=1,session_ms=10,stages_ms=dict(preparation=2,measurement=7,validation=1))

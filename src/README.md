@@ -1,11 +1,15 @@
 # Benchmark app
 
-- [bench_web](bench_web/README.md): Three.js benchmark interface at `/`.
+- [bench_web](bench_web/README.md): native benchmark homepage and browser USB distribution.
 - [stats_for_nerds](stats_for_nerds/README.md): detailed evidence at `/stats/`.
 - [layers](../layers/README.md): workload definitions, catalogs, and setup instructions.
 - [engine](../engine/MEASUREMENTS.md): native execution, measurement definitions, and the shared HTTP API.
 
-Use the repository-root uv environment and launch with `uv run python -m src`.
+For the hosted homepage, build the signed runner and run `npm run build`; deploy
+`dist/` over HTTPS. Visitors need only a supported browser and an authorized USB
+headset. For the local developer application, use the repository-root uv environment
+and launch with `uv run python -m src --developer` on port 8766.
+`uv run python -m src` now serves the packaged browser homepage on port 8765.
 See [setup and architecture](../README.md). Generated bundles, APK, credentials,
 signing key, and saved reports live under the root-level `engine/` directory and
 are ignored by Git.

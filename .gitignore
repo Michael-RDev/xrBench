@@ -14,5 +14,6 @@ local.properties
 hs_err_pid*.log
 
 node_modules/
+dist/
 .env
 *.log

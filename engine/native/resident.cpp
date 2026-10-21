@@ -1,4 +1,4 @@
-#include <vulkan/vulkan.h>
+#include "vulkan_dispatch.h"
 #include <jni.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -32,18 +32,18 @@ struct Resident {
  void check(){if(Clock::now()>=deadline)throw std::runtime_error("Resident submission exceeded 15 seconds");}
  ~Resident(){
    if(device){
-     vkDeviceWaitIdle(device);
-     for(auto p:pipelines)vkDestroyPipeline(device,p,nullptr);
-     if(fence)vkDestroyFence(device,fence,nullptr);
-     if(queries)vkDestroyQueryPool(device,queries,nullptr);
-     if(commands)vkDestroyCommandPool(device,commands,nullptr);
-     if(layout)vkDestroyPipelineLayout(device,layout,nullptr);
-     if(pool)vkDestroyDescriptorPool(device,pool,nullptr);
-     if(descriptors)vkDestroyDescriptorSetLayout(device,descriptors,nullptr);
-     for(int i=0;i<3;i++){if(mapped[i])vkUnmapMemory(device,memory[i]);if(buffers[i])vkDestroyBuffer(device,buffers[i],nullptr);if(memory[i])vkFreeMemory(device,memory[i],nullptr);}
-     vkDestroyDevice(device,nullptr);
+     xrgpu::vulkan_dispatch().vkDeviceWaitIdle(device);
+     for(auto p:pipelines)xrgpu::vulkan_dispatch().vkDestroyPipeline(device,p,nullptr);
+     if(fence)xrgpu::vulkan_dispatch().vkDestroyFence(device,fence,nullptr);
+     if(queries)xrgpu::vulkan_dispatch().vkDestroyQueryPool(device,queries,nullptr);
+     if(commands)xrgpu::vulkan_dispatch().vkDestroyCommandPool(device,commands,nullptr);
+     if(layout)xrgpu::vulkan_dispatch().vkDestroyPipelineLayout(device,layout,nullptr);
+     if(pool)xrgpu::vulkan_dispatch().vkDestroyDescriptorPool(device,pool,nullptr);
+     if(descriptors)xrgpu::vulkan_dispatch().vkDestroyDescriptorSetLayout(device,descriptors,nullptr);
+     for(int i=0;i<3;i++){if(mapped[i])xrgpu::vulkan_dispatch().vkUnmapMemory(device,memory[i]);if(buffers[i])xrgpu::vulkan_dispatch().vkDestroyBuffer(device,buffers[i],nullptr);if(memory[i])xrgpu::vulkan_dispatch().vkFreeMemory(device,memory[i],nullptr);}
+     xrgpu::vulkan_dispatch().vkDestroyDevice(device,nullptr);
    }
-   if(instance)vkDestroyInstance(instance,nullptr);
+   if(instance)xrgpu::vulkan_dispatch().vkDestroyInstance(instance,nullptr);
  }
  void initialize(uint32_t m,uint32_t k,uint32_t columns,bool c,bool trace,const std::string& test){
    candidate=c;detailed=trace;control=test;repeats=candidate&&control=="slower"?8:1;
@@ -53,23 +53,23 @@ struct Resident {
    if(sizes[0]+sizes[1]+sizes[2]>64*1024*1024)throw std::runtime_error("Resident buffers exceed 64 MiB");
    uint32_t tile=candidate?2:1;groups=((m+tile-1)/tile*columns+63)/64;
    deadline=Clock::now()+std::chrono::seconds(15);check();VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};app.apiVersion=VK_API_VERSION_1_1;
-   VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};info.pApplicationInfo=&app;checked(vkCreateInstance(&info,nullptr,&instance));
-   uint32_t n=0;checked(vkEnumeratePhysicalDevices(instance,&n,nullptr));if(!n)throw std::runtime_error("No Vulkan device");
-   std::vector<VkPhysicalDevice> devices(n);checked(vkEnumeratePhysicalDevices(instance,&n,devices.data()));physical=devices[0];
-   vkGetPhysicalDeviceProperties(physical,&properties);vkGetPhysicalDeviceQueueFamilyProperties(physical,&n,nullptr);
-   std::vector<VkQueueFamilyProperties> families(n);vkGetPhysicalDeviceQueueFamilyProperties(physical,&n,families.data());
+   VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};info.pApplicationInfo=&app;checked(xrgpu::vulkan_dispatch().vkCreateInstance(&info,nullptr,&instance));
+   uint32_t n=0;checked(xrgpu::vulkan_dispatch().vkEnumeratePhysicalDevices(instance,&n,nullptr));if(!n)throw std::runtime_error("No Vulkan device");
+   std::vector<VkPhysicalDevice> devices(n);checked(xrgpu::vulkan_dispatch().vkEnumeratePhysicalDevices(instance,&n,devices.data()));physical=devices[0];
+   xrgpu::vulkan_dispatch().vkGetPhysicalDeviceProperties(physical,&properties);xrgpu::vulkan_dispatch().vkGetPhysicalDeviceQueueFamilyProperties(physical,&n,nullptr);
+   std::vector<VkQueueFamilyProperties> families(n);xrgpu::vulkan_dispatch().vkGetPhysicalDeviceQueueFamilyProperties(physical,&n,families.data());
    bool found=false;for(uint32_t i=0;i<n;i++)if(families[i].queueFlags&VK_QUEUE_COMPUTE_BIT){family=i;bits=families[i].timestampValidBits;found=true;break;}
    if(!found)throw std::runtime_error("Compute queue unavailable");
    detailed=detailed&&bits&&properties.limits.timestampPeriod>0;
    if(properties.limits.maxComputeWorkGroupInvocations<64||properties.limits.maxComputeWorkGroupSize[0]<64||properties.limits.maxComputeWorkGroupCount[0]<groups)throw std::runtime_error("Resident dispatch limits exceeded");
    float priority=1;VkDeviceQueueCreateInfo qi{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};qi.queueFamilyIndex=family;qi.queueCount=1;qi.pQueuePriorities=&priority;
-   VkDeviceCreateInfo di{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};di.queueCreateInfoCount=1;di.pQueueCreateInfos=&qi;checked(vkCreateDevice(physical,&di,nullptr,&device));vkGetDeviceQueue(device,family,0,&queue);
-   VkPhysicalDeviceMemoryProperties mp{};vkGetPhysicalDeviceMemoryProperties(physical,&mp);
+   VkDeviceCreateInfo di{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};di.queueCreateInfoCount=1;di.pQueueCreateInfos=&qi;checked(xrgpu::vulkan_dispatch().vkCreateDevice(physical,&di,nullptr,&device));xrgpu::vulkan_dispatch().vkGetDeviceQueue(device,family,0,&queue);
+   VkPhysicalDeviceMemoryProperties mp{};xrgpu::vulkan_dispatch().vkGetPhysicalDeviceMemoryProperties(physical,&mp);
    VkDeviceSize allocated=0;
    for(int i=0;i<3;i++){
      VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};bi.size=sizes[i];
      if(sizes[i]>properties.limits.maxStorageBufferRange)throw std::runtime_error("Storage buffer range exceeded");bi.usage=VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;bi.sharingMode=VK_SHARING_MODE_EXCLUSIVE;
-     checked(vkCreateBuffer(device,&bi,nullptr,&buffers[i]));VkMemoryRequirements req{};vkGetBufferMemoryRequirements(device,buffers[i],&req);
+     checked(xrgpu::vulkan_dispatch().vkCreateBuffer(device,&bi,nullptr,&buffers[i]));VkMemoryRequirements req{};xrgpu::vulkan_dispatch().vkGetBufferMemoryRequirements(device,buffers[i],&req);
      allocated+=req.size;if(allocated>64*1024*1024)throw std::runtime_error("Resident scratch exceeds 64 MiB");
      uint32_t chosen=UINT32_MAX;
      for(uint32_t m=0;m<mp.memoryTypeCount;m++)if((req.memoryTypeBits&(1u<<m))&&
@@ -79,53 +79,53 @@ struct Resident {
      if(chosen==UINT32_MAX)throw std::runtime_error("Host-coherent resident memory unavailable");
      deviceLocal=deviceLocal&&bool(mp.memoryTypes[chosen].propertyFlags&VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
      VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};ai.allocationSize=req.size;ai.memoryTypeIndex=chosen;
-     checked(vkAllocateMemory(device,&ai,nullptr,&memory[i]));checked(vkBindBufferMemory(device,buffers[i],memory[i],0));checked(vkMapMemory(device,memory[i],0,sizes[i],0,&mapped[i]));
+     checked(xrgpu::vulkan_dispatch().vkAllocateMemory(device,&ai,nullptr,&memory[i]));checked(xrgpu::vulkan_dispatch().vkBindBufferMemory(device,buffers[i],memory[i],0));checked(xrgpu::vulkan_dispatch().vkMapMemory(device,memory[i],0,sizes[i],0,&mapped[i]));
    }
    std::fill_n(static_cast<float*>(mapped[2]),sizes[2]/4,std::numeric_limits<float>::quiet_NaN());
    VkDescriptorSetLayoutBinding bindings[3]{};for(int i=0;i<3;i++){bindings[i].binding=i;bindings[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;bindings[i].descriptorCount=1;bindings[i].stageFlags=VK_SHADER_STAGE_COMPUTE_BIT;}
-   VkDescriptorSetLayoutCreateInfo li{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};li.bindingCount=3;li.pBindings=bindings;checked(vkCreateDescriptorSetLayout(device,&li,nullptr,&descriptors));
-   VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,3};VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};pi.maxSets=1;pi.poolSizeCount=1;pi.pPoolSizes=&size;checked(vkCreateDescriptorPool(device,&pi,nullptr,&pool));
-   VkDescriptorSetAllocateInfo si{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};si.descriptorPool=pool;si.descriptorSetCount=1;si.pSetLayouts=&descriptors;checked(vkAllocateDescriptorSets(device,&si,&set));
+   VkDescriptorSetLayoutCreateInfo li{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};li.bindingCount=3;li.pBindings=bindings;checked(xrgpu::vulkan_dispatch().vkCreateDescriptorSetLayout(device,&li,nullptr,&descriptors));
+   VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,3};VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};pi.maxSets=1;pi.poolSizeCount=1;pi.pPoolSizes=&size;checked(xrgpu::vulkan_dispatch().vkCreateDescriptorPool(device,&pi,nullptr,&pool));
+   VkDescriptorSetAllocateInfo si{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};si.descriptorPool=pool;si.descriptorSetCount=1;si.pSetLayouts=&descriptors;checked(xrgpu::vulkan_dispatch().vkAllocateDescriptorSets(device,&si,&set));
    VkDescriptorBufferInfo bufferInfo[3]{};VkWriteDescriptorSet writes[3]{};
    for(int i=0;i<3;i++){bufferInfo[i]={buffers[i],0,sizes[i]};writes[i]={VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};writes[i].dstSet=set;writes[i].dstBinding=i;writes[i].descriptorCount=1;writes[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;writes[i].pBufferInfo=&bufferInfo[i];}
-   vkUpdateDescriptorSets(device,3,writes,0,nullptr);
-   VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT,0,16};VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};pli.setLayoutCount=1;pli.pSetLayouts=&descriptors;pli.pushConstantRangeCount=1;pli.pPushConstantRanges=&push;checked(vkCreatePipelineLayout(device,&pli,nullptr,&layout));
-   VkCommandPoolCreateInfo ci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};ci.queueFamilyIndex=family;ci.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;checked(vkCreateCommandPool(device,&ci,nullptr,&commands));
-   VkCommandBufferAllocateInfo ca{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};ca.commandPool=commands;ca.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;ca.commandBufferCount=1;checked(vkAllocateCommandBuffers(device,&ca,&command));
-   if(detailed){VkQueryPoolCreateInfo q{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};q.queryType=VK_QUERY_TYPE_TIMESTAMP;q.queryCount=16;checked(vkCreateQueryPool(device,&q,nullptr,&queries));}
-   VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};checked(vkCreateFence(device,&fi,nullptr,&fence));check();
+   xrgpu::vulkan_dispatch().vkUpdateDescriptorSets(device,3,writes,0,nullptr);
+   VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT,0,16};VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};pli.setLayoutCount=1;pli.pSetLayouts=&descriptors;pli.pushConstantRangeCount=1;pli.pPushConstantRanges=&push;checked(xrgpu::vulkan_dispatch().vkCreatePipelineLayout(device,&pli,nullptr,&layout));
+   VkCommandPoolCreateInfo ci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};ci.queueFamilyIndex=family;ci.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;checked(xrgpu::vulkan_dispatch().vkCreateCommandPool(device,&ci,nullptr,&commands));
+   VkCommandBufferAllocateInfo ca{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};ca.commandPool=commands;ca.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;ca.commandBufferCount=1;checked(xrgpu::vulkan_dispatch().vkAllocateCommandBuffers(device,&ca,&command));
+   if(detailed){VkQueryPoolCreateInfo q{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};q.queryType=VK_QUERY_TYPE_TIMESTAMP;q.queryCount=16;checked(xrgpu::vulkan_dispatch().vkCreateQueryPool(device,&q,nullptr,&queries));}
+   VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};checked(xrgpu::vulkan_dispatch().vkCreateFence(device,&fi,nullptr,&fence));check();
  }
  VkPipeline pipeline(const uint32_t* code,size_t length){
-   check();VkShaderModule shader{};VkShaderModuleCreateInfo s{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};s.codeSize=length;s.pCode=code;checked(vkCreateShaderModule(device,&s,nullptr,&shader));
+   check();VkShaderModule shader{};VkShaderModuleCreateInfo s{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};s.codeSize=length;s.pCode=code;checked(xrgpu::vulkan_dispatch().vkCreateShaderModule(device,&s,nullptr,&shader));
    VkComputePipelineCreateInfo p{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};p.layout=layout;p.stage={VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};p.stage.stage=VK_SHADER_STAGE_COMPUTE_BIT;p.stage.module=shader;p.stage.pName="main";
-   VkPipeline result{};auto status=vkCreateComputePipelines(device,VK_NULL_HANDLE,1,&p,nullptr,&result);vkDestroyShaderModule(device,shader,nullptr);checked(status);pipelines.push_back(result);return result;
+   VkPipeline result{};auto status=xrgpu::vulkan_dispatch().vkCreateComputePipelines(device,VK_NULL_HANDLE,1,&p,nullptr,&result);xrgpu::vulkan_dispatch().vkDestroyShaderModule(device,shader,nullptr);checked(status);pipelines.push_back(result);return result;
  }
  void sample(){
    // Allocation and input copies happen at setup. This timer covers command recording,
    // submission and the completion wait; output readback happens in residentRead.
    deadline=Clock::now()+std::chrono::seconds(15);auto start=Clock::now();
-   check();checked(vkResetFences(device,1,&fence));checked(vkResetCommandBuffer(command,0));VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};checked(vkBeginCommandBuffer(command,&begin));
-   if(detailed)vkCmdResetQueryPool(command,queries,0,16);
+   check();checked(xrgpu::vulkan_dispatch().vkResetFences(device,1,&fence));checked(xrgpu::vulkan_dispatch().vkResetCommandBuffer(command,0));VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};checked(xrgpu::vulkan_dispatch().vkBeginCommandBuffer(command,&begin));
+   if(detailed)xrgpu::vulkan_dispatch().vkCmdResetQueryPool(command,queries,0,16);
    VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};barrier.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT|VK_ACCESS_SHADER_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT;
-   vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_HOST_BIT|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&barrier,0,nullptr,0,nullptr);
-   vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,pipelines[0]);vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,1,&set,0,nullptr);
-   vkCmdPushConstants(command,layout,VK_SHADER_STAGE_COMPUTE_BIT,0,16,dims);
+   xrgpu::vulkan_dispatch().vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_HOST_BIT|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&barrier,0,nullptr,0,nullptr);
+   xrgpu::vulkan_dispatch().vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,pipelines[0]);xrgpu::vulkan_dispatch().vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,1,&set,0,nullptr);
+   xrgpu::vulkan_dispatch().vkCmdPushConstants(command,layout,VK_SHADER_STAGE_COMPUTE_BIT,0,16,dims);
    for(uint32_t r=0;r<repeats;r++){
      if(r){VkMemoryBarrier dependency{VK_STRUCTURE_TYPE_MEMORY_BARRIER};dependency.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;dependency.dstAccessMask=VK_ACCESS_SHADER_WRITE_BIT;
-       vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&dependency,0,nullptr,0,nullptr);}
-     if(detailed)vkCmdWriteTimestamp(command,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,queries,r*2);
-     vkCmdDispatch(command,groups,1,1);
-     if(detailed)vkCmdWriteTimestamp(command,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,queries,r*2+1);
+       xrgpu::vulkan_dispatch().vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&dependency,0,nullptr,0,nullptr);}
+     if(detailed)xrgpu::vulkan_dispatch().vkCmdWriteTimestamp(command,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,queries,r*2);
+     xrgpu::vulkan_dispatch().vkCmdDispatch(command,groups,1,1);
+     if(detailed)xrgpu::vulkan_dispatch().vkCmdWriteTimestamp(command,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,queries,r*2+1);
    }
    barrier.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_HOST_READ_BIT;
-   vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&barrier,0,nullptr,0,nullptr);checked(vkEndCommandBuffer(command));
-   VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&command;checked(vkQueueSubmit(queue,1,&submit,fence));
+   xrgpu::vulkan_dispatch().vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&barrier,0,nullptr,0,nullptr);checked(xrgpu::vulkan_dispatch().vkEndCommandBuffer(command));
+   VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&command;checked(xrgpu::vulkan_dispatch().vkQueueSubmit(queue,1,&submit,fence));
    auto remaining=std::chrono::duration_cast<std::chrono::nanoseconds>(deadline-Clock::now()).count();
-   checked(vkWaitForFences(device,1,&fence,VK_TRUE,std::max<int64_t>(1,remaining)));check();
+   checked(xrgpu::vulkan_dispatch().vkWaitForFences(device,1,&fence,VK_TRUE,std::max<int64_t>(1,remaining)));check();
    wall=std::chrono::duration<double,std::milli>(Clock::now()-start).count();
    events=Json::array();gpu=0;
    if(detailed){
-     uint64_t times[16]{};checked(vkGetQueryPoolResults(device,queries,0,2*repeats,sizeof(times),times,sizeof(uint64_t),VK_QUERY_RESULT_64_BIT));
+     uint64_t times[16]{};checked(xrgpu::vulkan_dispatch().vkGetQueryPoolResults(device,queries,0,2*repeats,sizeof(times),times,sizeof(uint64_t),VK_QUERY_RESULT_64_BIT));
      uint64_t mask=bits==64?UINT64_MAX:((uint64_t(1)<<bits)-1);double period=properties.limits.timestampPeriod;
      for(uint32_t r=0;r<repeats;r++){
        double begin=double((times[2*r]-times[0])&mask)*period,end=double((times[2*r+1]-times[0])&mask)*period;

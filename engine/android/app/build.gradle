@@ -11,7 +11,26 @@ android {
         versionName '0.1.0'
         ndk { abiFilters 'arm64-v8a' }
     }
-    signingConfigs { debug { storeFile rootProject.file('../.state/debug.keystore') } }
+    signingConfigs {
+        debug { storeFile rootProject.file('../.state/debug.keystore') }
+        web {
+            def key = System.getenv('XRBENCH_WEB_KEYSTORE')
+            if (key) storeFile file(key)
+            storePassword System.getenv('XRBENCH_WEB_STORE_PASSWORD')
+            keyAlias System.getenv('XRBENCH_WEB_KEY_ALIAS')
+            keyPassword System.getenv('XRBENCH_WEB_KEY_PASSWORD')
+        }
+    }
+    buildTypes {
+        web {
+            initWith debug
+            applicationIdSuffix '.web'
+            // The browser uses authenticated ADB run-as for private commands/reports.
+            debuggable true
+            signingConfig signingConfigs.web
+            matchingFallbacks = ['debug']
+        }
+    }
     sourceSets.main {
         assets.srcDirs = [rootProject.file('../.build/assets')]
         jniLibs.srcDirs = [rootProject.file('../.build/lib')]
@@ -22,4 +41,13 @@ android {
     }
     packaging { jniLibs { useLegacyPackaging = true } }
     androidResources { noCompress 'pte', 'bin' }
+}
+androidComponents {
+    onVariants(selector().withBuildType('web')) { variant ->
+        def code = (System.getenv('XRBENCH_WEB_VERSION_CODE') ?: '1').toInteger()
+        variant.outputs.each { output ->
+            output.versionCode.set(code)
+            output.versionName.set('0.1.' + code)
+        }
+    }
 }

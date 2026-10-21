@@ -23,10 +23,11 @@ public final class MainActivity extends Activity {
             worker.start();return;
         }
         String id=getIntent().getStringExtra("run_id");
-        if(id==null){label.setText("xrGPU native benchmarks\nConnect USB and press Run on the local website.");return;}
+        if(id==null){label.setText("xrGPU native benchmarks\nConnect USB and press Run on the website.");return;}
         try{
             Checks.identity(id);
             if(Runner.active.get())throw new IllegalStateException("Another run is active");
+            if(new File(getFilesDir(),"runs/"+id+"/report.json").exists())throw new IllegalStateException("This run already has evidence; reconnect to recover it");
             if(Fileset.read(new File(getFilesDir(),"commands/"+id+".json")).getString("mode").equals("xr")){
                 startActivity(new Intent(this,XrActivity.class).putExtra("run_id",id));finish();return;
             }
