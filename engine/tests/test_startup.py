@@ -1,134 +1,148 @@
 import subprocess
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from engine import __main__ as launcher
+from engine.db import SchemaNotReady, Store
 from engine.db import config
+from engine.paths import COMPOSE
 
 
 @pytest.fixture
 def local_config(tmp_path, monkeypatch):
-    monkeypatch.delenv("XRGPU_DATABASE_URL", raising=False)
-    path = tmp_path / ".env"
-    path.write_text("XRGPU_DB_PASSWORD=private-test-password\nXRGPU_DB_PORT=5544\n")
-    monkeypatch.setattr(config, "ENV", path)
-    monkeypatch.setattr(config, "COMPOSE", tmp_path / "compose.yaml")
+    for key in ('XRGPU_DATABASE_URL', 'XRGPU_DB_PASSWORD', 'XRGPU_DB_PORT'):
+        monkeypatch.delenv(key, raising=False)
+    path = tmp_path / '.env'
+    path.write_text('XRGPU_DB_PASSWORD=private-test-password\nXRGPU_DB_PORT=5544\n')
+    monkeypatch.setattr(config, 'ENV', path)
+    monkeypatch.setattr(subprocess, 'run', lambda *a, **k: pytest.fail('Startup invoked an external process'))
     return path
 
 
-def test_docker_readiness_precedes_bounded_compose_start(local_config, monkeypatch, capsys):
-    calls = []
-
-    def run(command, **kwargs):
-        calls.append((command, kwargs))
-        return subprocess.CompletedProcess(command, 0, stdout="ready", stderr="")
-
-    monkeypatch.setattr(config.subprocess, "run", run)
-    store = config.database()
-    assert calls[0][0][:2] == ["docker", "info"]
-    assert calls[0][1]["timeout"] == 10
-    command, options = calls[1]
-    assert command[:2] == ["docker", "compose"]
-    assert command[-6:] == ["up", "-d", "--wait", "--wait-timeout", "60", "db"]
-    assert command[command.index("--env-file") + 1] == str(local_config)
-    assert options["timeout"] == 120
-    assert options["check"] and options["capture_output"]
+def test_database_configuration_is_read_only_and_never_starts_docker(local_config):
     from psycopg.conninfo import conninfo_to_dict
-    assert conninfo_to_dict(store.dsn)["port"] == "5544"
-    assert "Starting local PostgreSQL" in capsys.readouterr().out
+    original = local_config.read_bytes()
+    params = conninfo_to_dict(config.database().dsn)
+    assert params['host'] == '127.0.0.1' and params['port'] == '5544'
+    assert params['password'] == 'private-test-password'
+    assert local_config.read_bytes() == original
+    assert list(local_config.parent.iterdir()) == [local_config]
 
 
-@pytest.mark.parametrize("failure", ["timeout", "unavailable", "missing"])
-def test_unavailable_docker_never_launches_compose(local_config, monkeypatch, failure):
-    calls = []
-
-    def run(command, **kwargs):
-        calls.append(command)
-        if failure == "timeout":
-            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
-        if failure == "missing":
-            raise FileNotFoundError("docker")
-        raise subprocess.CalledProcessError(1, command, stderr="Cannot connect to the Docker daemon")
-
-    monkeypatch.setattr(config.subprocess, "run", run)
-    with pytest.raises(config.DatabaseStartupError, match="Docker") as error:
-        config.database()
-    assert len(calls) == 1
-    assert "Docker Desktop" in str(error.value)
-    if failure == "timeout":
-        assert "10 seconds" in str(error.value)
-
-
-@pytest.mark.parametrize("failure", ["timeout", "container"])
-def test_compose_failure_is_actionable_and_redacts_password(local_config, monkeypatch, failure):
-    def run(command, **kwargs):
-        if command[1] == "info":
-            return subprocess.CompletedProcess(command, 0)
-        if failure == "timeout":
-            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
-        raise subprocess.CalledProcessError(
-            1, command, stderr="port is already allocated; private-test-password"
-        )
-
-    monkeypatch.setattr(config.subprocess, "run", run)
-    with pytest.raises(config.DatabaseStartupError) as error:
-        config.database()
-    message = str(error.value)
-    assert "PostgreSQL container" in message and "container logs" in message
-    assert "private-test-password" not in message
-    assert "120 seconds" in message if failure == "timeout" else "port is already allocated" in message
-
-
-def test_existing_database_bypasses_docker(local_config, monkeypatch):
-    monkeypatch.setattr(config.subprocess, "run", lambda *a, **k: pytest.fail("Docker was invoked"))
-    assert config.database(False).dsn
-    external = "postgresql://external/database"
-    monkeypatch.setenv("XRGPU_DATABASE_URL", external)
+def test_missing_configuration_requires_manual_setup_without_generating_credentials(local_config):
     local_config.unlink()
-    assert config.database().dsn == external
+    with pytest.raises(config.DatabaseStartupError, match='engine/.env.example'):
+        config.database()
     assert not local_config.exists()
 
 
-@pytest.mark.parametrize("failure", ["docker", "interrupt"])
-def test_startup_failure_exits_cleanly_before_controller_creation(monkeypatch, capsys, failure):
-    monkeypatch.setattr("sys.argv", ["xrbench", "--no-open"])
+def test_external_database_does_not_read_or_create_local_configuration(local_config, monkeypatch):
+    monkeypatch.setenv('XRGPU_DATABASE_URL', 'postgresql://external/database')
+    local_config.unlink()
+    assert config.database().dsn == 'postgresql://external/database'
+    assert not local_config.exists()
 
-    def database(start):
-        if failure == "interrupt":
-            raise KeyboardInterrupt
-        raise config.DatabaseStartupError("Docker engine is not responding")
 
-    monkeypatch.setattr(launcher, "database", database)
-    monkeypatch.setattr(launcher, "Controller", lambda *a: pytest.fail("Controller was started"))
+def test_environment_overrides_match_compose_settings(local_config, monkeypatch):
+    from psycopg.conninfo import conninfo_to_dict
+    monkeypatch.setenv('XRGPU_DB_PASSWORD', 'another-test-password')
+    monkeypatch.setenv('XRGPU_DB_PORT', '5545')
+    value = conninfo_to_dict(config.database().dsn)
+    assert value['port'] == '5545' and value['password'] == 'another-test-password'
+
+
+@pytest.mark.parametrize('contents', [
+    'XRGPU_DB_PASSWORD=\n', 'XRGPU_DB_PASSWORD=replace-with-your-own-password\n',
+    'XRGPU_DB_PASSWORD=private-test-password\nXRGPU_DB_PORT=bad\n',
+    'XRGPU_DB_PASSWORD=private-test-password\nXRGPU_DB_PORT=0\n',
+    'XRGPU_DB_PASSWORD=private-test-password\nXRGPU_DB_PORT=65536\n',
+    'invalid-private-test-password-line\n',
+])
+def test_invalid_configuration_fails_without_rewriting_or_exposing_credentials(local_config, contents):
+    local_config.write_text(contents)
+    with pytest.raises(config.DatabaseStartupError) as error:
+        config.database()
+    assert 'private-test-password' not in str(error.value)
+    assert local_config.read_text() == contents
+
+
+def test_server_start_checks_database_but_never_migrates_or_starts_services(local_config, monkeypatch):
+    calls = []
+    store = SimpleNamespace(health=lambda: calls.append('health'), migrate=lambda: pytest.fail('Automatic SQL'))
+    monkeypatch.setattr(launcher, 'database', lambda: store)
+    monkeypatch.setattr(launcher, 'ADB', lambda path: 'adb')
+    stopped = []
+    controller = SimpleNamespace(stopping=SimpleNamespace(set=lambda: stopped.append(True)))
+    monkeypatch.setattr(launcher, 'Controller', lambda *args: calls.append('controller') or controller)
+    server = SimpleNamespace(server_port=8766, serve_forever=lambda: calls.append('serve'),
+                             server_close=lambda: calls.append('close'))
+    monkeypatch.setattr(launcher, 'create_server', lambda *args: server)
+    monkeypatch.setattr(launcher.webbrowser, 'open', lambda *args: pytest.fail('Browser opened'))
+    monkeypatch.setattr('sys.argv', ['xrbench', '--no-open', '--no-docker', '--port', '8766'])
+    launcher.main()
+    assert calls == ['health', 'controller', 'serve', 'close'] and stopped == [True]
+
+
+@pytest.mark.parametrize('failure,expected', [
+    (RuntimeError('private-test-password: connection refused'), 'Start the database container manually'),
+    (SchemaNotReady('missing'), 'Apply the SQL files'),
+])
+def test_server_requires_manual_database_and_schema_setup(monkeypatch, failure, expected):
+    def health():
+        raise failure
+    monkeypatch.setattr(launcher, 'database', lambda: SimpleNamespace(health=health))
+    monkeypatch.setattr(launcher, 'Controller', lambda *a: pytest.fail('Controller started before setup'))
+    monkeypatch.setattr('sys.argv', ['xrbench', '--no-open'])
     with pytest.raises(SystemExit) as error:
         launcher.main()
-    if failure == "interrupt":
-        assert error.value.code == 130
-        assert "startup canceled" in capsys.readouterr().err
-    else:
-        assert str(error.value) == "Docker engine is not responding"
+    assert expected in str(error.value)
+    assert 'private-test-password' not in str(error.value)
 
 
-def test_interrupt_during_migrations_is_also_clean(monkeypatch):
-    monkeypatch.setattr("sys.argv", ["xrbench", "--no-open"])
+def test_migration_flag_cannot_apply_sql_from_the_server_entry_point(monkeypatch):
+    monkeypatch.setattr('sys.argv', ['xrbench', '--migrate-only'])
+    monkeypatch.setattr(launcher, 'database', lambda: pytest.fail('Database accessed'))
+    with pytest.raises(SystemExit) as error:
+        launcher.main()
+    assert error.value.code == 2
 
-    def migrate():
+
+def test_interrupt_during_readiness_check_exits_cleanly(monkeypatch, capsys):
+    def health():
         raise KeyboardInterrupt
-
-    monkeypatch.setattr(launcher, "database", lambda start: SimpleNamespace(migrate=migrate))
+    monkeypatch.setattr('sys.argv', ['xrbench', '--no-open'])
+    monkeypatch.setattr(launcher, 'database', lambda: SimpleNamespace(health=health))
     with pytest.raises(SystemExit) as error:
         launcher.main()
     assert error.value.code == 130
+    assert 'startup canceled' in capsys.readouterr().err
 
 
-def test_migrate_only_skips_docker_when_requested_and_does_not_open_browser(monkeypatch, capsys):
-    starts, migrations = [], []
-    monkeypatch.setattr("sys.argv", ["xrbench", "--migrate-only", "--no-docker"])
-    monkeypatch.setattr(launcher, "database", lambda start: (
-        starts.append(start) or SimpleNamespace(migrate=lambda: migrations.append(True))
-    ))
-    monkeypatch.setattr(launcher.webbrowser, "open", lambda *a: pytest.fail("Browser opened"))
-    launcher.main()
-    assert starts == [False] and migrations == [True]
-    assert "migrations applied" in capsys.readouterr().out
+@pytest.mark.parametrize('versions,ready', [([], False), ([1], False), ([1, 2], True)])
+def test_readiness_only_reads_schema_versions_and_tables(monkeypatch, versions, ready):
+    calls = []
+    def execute(query):
+        calls.append(query)
+        return [(v,) for v in versions] if 'SELECT version' in query else []
+    store = Store('unused')
+    monkeypatch.setattr(store, 'connect', lambda: nullcontext(SimpleNamespace(execute=execute)))
+    if ready:
+        assert store.health()
+        assert len(calls) == 3
+    else:
+        with pytest.raises(SchemaNotReady):
+            store.health()
+    assert all(query.startswith('SELECT ') for query in calls)
+
+
+def test_compose_preserves_the_database_volume_and_requires_explicit_start_and_sql():
+    compose = yaml.safe_load(COMPOSE.read_text())
+    assert compose['name'] == 'xrgpu-benchmarks'
+    db = compose['services']['db']
+    assert db['restart'] == 'no'
+    assert 'benchmark-postgres:/var/lib/postgresql/data' in db['volumes']
+    assert './db/migrations:/migrations:ro' in db['volumes']
+    assert not any('docker-entrypoint-initdb.d' in path for path in db['volumes'])

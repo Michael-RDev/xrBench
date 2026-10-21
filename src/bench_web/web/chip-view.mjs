@@ -36,7 +36,7 @@ export function chipEvidence(session,reports,catalog,now=Date.now()){
     cases:phaseCases[phase.processor]||[],phaseCases,current:progress.current_case||'',samples:progress.current_samples||0,
     correctness:current?.correctness?.passed===true?'Passed':current?.correctness?.passed===false?'Failed':'Checking',recent,
     phases:session.phases.map(p=>({processor:p.processor,status:p.run?.status||p.status,reason:p.reason,
-      counts:p.run?.counts||reports[p.run_id]?.counts})),error:session.error};
+      counts:p.run?.counts||reports[p.run_id]?.counts})),error:session.error||phase.reason};
 }
 
 // Existing single-backend runs can be recovered here without visiting another UI.
@@ -73,7 +73,8 @@ export function renderChip(document,data,source='native'){
   $('chip-samples').textContent=`${data.samples} ${simulated?'synthetic ':''}samples`;
   for(const region of document.querySelectorAll('.chip-region')){
     const phase=data.phases.find(p=>p.processor===region.dataset.processor);
-    const live=data.active&&data.processor===region.dataset.processor;
+    region.hidden=!phase;
+    const live=!!phase&&data.active&&data.processor===region.dataset.processor;
     region.dataset.active=String(live);region.querySelector('span').textContent=simulated?`Simulated · ${phase?.status||'pending'}`:data.stale&&data.processor===region.dataset.processor?'Waiting':phase?.status||'Not part of this run';
   }
   const node=(tag,text,cls)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(cls)el.className=cls;return el;};

@@ -27,7 +27,7 @@ test('every catalog device can complete an identical synthetic workload without 
       assert.ok(report.results.every(r=>r.samples.length===20&&r.simulated));
       assert.doesNotMatch(report.run_id,/^run-[0-9a-f]{32}$/);
     }
-    const samples=JSON.stringify(state.reports['demo-cpu'].results);
+    const samples=JSON.stringify(state.reports['demo-gpu'].results);
     baseline??=samples;assert.equal(samples,baseline);
     demo.destroy();assert.equal(time.size,0);
   }
@@ -40,4 +40,13 @@ test('exit during connection cancels completion and disposed components remain i
   demo.exit();time.tick(1000);assert.equal(demo.snapshot.stage,'closed');assert.equal(time.size,0);
   demo.open();demo.choose('quest-3');demo.connect();demo.destroy();time.tick(1000);
   demo.open();demo.start();assert.equal(demo.snapshot.stage,'closed');assert.equal(time.size,0);
+});
+
+test('CPU demo requires sourced absence; a normal demo runs exactly one GPU phase',()=>{
+  const time=clock(),demo=createDemoController(time);demo.setCatalogs(devices,cases);
+  demo.open();demo.choose('quest-3');demo.connect();time.tick(500);
+  assert.throws(()=>demo.start('cpu'),/confirmed to have no GPU/);
+  demo.start();assert.deepEqual(demo.snapshot.session.phases.map(p=>p.processor),['gpu']);
+  time.tick(11999);assert.equal(demo.snapshot.session.status,'running');
+  time.tick(1);assert.equal(demo.snapshot.session.status,'complete');demo.destroy();
 });

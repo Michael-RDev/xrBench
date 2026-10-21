@@ -1,4 +1,4 @@
-"""Durable CPU→GPU orchestration. Browsers observe; only the controller advances."""
+"""Durable GPU-default sessions, with recovery of existing multi-phase runs."""
 import copy
 import hashlib
 import json
@@ -48,13 +48,19 @@ class BenchmarkSessions:
                    for s in self.benchmark_sessions.values())
 
     def create_session(self, request):
-        if set(request) - {'serial', 'request_id'} or not isinstance(request.get('request_id'), str) or not REQUEST_ID.fullmatch(request['request_id']):
+        if set(request) - {'serial', 'request_id', 'processor'} or not isinstance(request.get('request_id'), str) or not REQUEST_ID.fullmatch(request['request_id']):
             raise ValueError('A valid idempotent request_id and device serial are required')
+        processor = request.get('processor', 'gpu')
+        if processor not in ('gpu', 'cpu'):
+            raise ValueError('Processor must be gpu or cpu')
         with self.lock:
             for session in self.benchmark_sessions.values():
                 if session['request_id'] == request['request_id']:
                     if request.get('serial') and request['serial'] != session['serial']:
                         raise ValueError('This request_id belongs to another device')
+                    if (session.get('processor') and session['processor'] != processor or
+                            not session.get('processor') and 'processor' in request):
+                        raise ValueError('This request_id belongs to a different processor plan')
                     return self.session_view(session['session_id'])
             discovered = self.adb.devices()['devices']
             ready = [d for d in discovered if d.get('supported') and d['state'] == 'device']
@@ -66,15 +72,17 @@ class BenchmarkSessions:
                 raise ValueError('Select one authorized Android device')
             if self.session_reserved(serial) or any(j['serial'] == serial and j['status'] not in TERMINAL for j in self.jobs.values()) or self.probes.get(serial, {}).get('status') == 'running':
                 raise ValueError('This device is busy; recover or stop its active run first')
-            identity = device.get('identity') or identify(device)
+            identity = identify(device)
+            if processor == 'cpu' and not identity['cpu_eligible']:
+                raise ValueError('CPU testing requires a chip confirmed to have no GPU')
             phases = []
-            for processor, backend in [('cpu', 'executorch_cpu'), ('gpu', 'executorch_vulkan')]:
+            for backend in ['executorch_vulkan' if processor == 'gpu' else 'executorch_cpu']:
                 config, metadata = self.configuration(dict(backend=backend, mode='isolated', preset='smoke', execution_target=identity['execution_location']))
                 phases.append(dict(processor=processor, backend=backend, status='pending', configuration=config,
                                    run_id='run-' + uuid.uuid4().hex))
             session = dict(session_id='bench-' + uuid.uuid4().hex, request_id=request['request_id'], serial=serial,
                            status='starting', created_at=time.time(), cancel_requested=False, phases=phases,
-                           identity=identity, current_phase=0, capabilities_checked=False)
+                           identity=identity, processor=processor, current_phase=0, capabilities_checked=False)
             self.benchmark_sessions[session['session_id']] = session
             self.watch.leases.pop(serial, None)
             self.save_session(session)
@@ -115,9 +123,20 @@ class BenchmarkSessions:
                     self.save_session(s)
                     return
             elif phase['status'] == 'pending':
+                if not s.get('capabilities_checked'):
+                    return
+                if s.get('processor') == 'cpu':
+                    evidence = {**s['identity'].get('identity_evidence', {}), **s.get('capabilities', {})}
+                    if not identify(evidence)['cpu_eligible']:
+                        phase.update(status='unsupported', reason='CPU testing requires a chip confirmed to have no GPU')
+                        s.update(status='failed', error=phase['reason'], finished_at=time.time())
+                        self.save_session(s)
+                        return
                 support = s.get('capabilities', {}).get('backends', {}).get(phase['backend'], {})
                 if not support.get('compatible'):
                     phase.update(status='unsupported', reason=support.get('reason', 'Backend capability unavailable'))
+                    if s.get('processor'):
+                        s['error'] = phase['reason']
                 else:
                     config, metadata = self.configuration(dict(backend=phase['backend'], mode='isolated', preset='smoke', execution_target=s['identity']['execution_location']))
                     if config != phase['configuration']:

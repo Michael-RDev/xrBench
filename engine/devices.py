@@ -9,6 +9,25 @@ def normalize(value):
     return " ".join(str(value or "").replace("_", " ").lower().split())
 
 
+def gpu_eligibility(chip, capabilities=None, conflict=False):
+    """Absence requires sourced catalog evidence, never a failed Vulkan probe."""
+    caps, chip = capabilities or {}, chip or {}
+    backends = caps.get('backends') or {}
+    detected = (caps.get('vulkan') is True or bool(caps.get('gpu')) or
+                (caps.get('physical_device_count') or 0) > 0 or
+                any(backends.get(name, {}).get('compatible') is True
+                    for name in ('executorch_vulkan', 'vulkan_resident')))
+    source = chip.get('gpu_presence_source')
+    source = source.strip() if isinstance(source, str) else ''
+    declared = chip.get('gpu_presence') if not conflict else 'unknown'
+    presence = 'present' if detected else declared if declared in ('present', 'absent') else 'unknown'
+    if presence == 'absent' and not source:
+        presence = 'unknown'
+    return dict(gpu_presence=presence, gpu_presence_source='native' if detected else
+                None if presence == 'unknown' else source or None,
+                cpu_eligible=presence == 'absent' and not conflict)
+
+
 def identify(device):
     identifiers = {normalize(device.get(key)) for key in ("model", "product", "device")} - {"", "unknown"}
     candidates = [d for d in CATALOG["devices"] if identifiers.intersection(map(normalize, d["aliases"]))]
@@ -39,4 +58,4 @@ def identify(device):
                 reported_soc=device.get("soc_model"), visual_model=entry["visual"] if entry and not conflict else "schematic",
                 execution_location=location, identity_evidence={key:device.get(key) for key in ('model','product','device','soc_model','soc_manufacturer')},
                 chips=chips, source=entry["source"] if entry else (known or {}).get('source'),
-                validation_status="unvalidated")
+                validation_status="unvalidated", **gpu_eligibility(known, device, conflict))

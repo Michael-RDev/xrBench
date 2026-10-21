@@ -1,9 +1,9 @@
 # Bench Web
 
 The local homepage keeps the ivory, graphite and sage palette. Run creates an
-isolated Smoke session: all 63 standard CPU cases, followed by all 63 standard GPU
-cases. The active controller owns this sequence and reserves the selected device across
-both phases. Browsers display native evidence. Stats for Nerds retains
+isolated Smoke session containing all 63 standard GPU cases. The active controller
+reserves the selected device throughout the run. Browsers display native evidence.
+Stats for Nerds retains
 single-backend controls, development workloads and custom kernel experiments.
 
 ## Browser distribution
@@ -16,7 +16,7 @@ Its existing APIs and local build workflow remain available.
 
 On the hosted site, **Run** opens the USB device chooser if needed, authenticates,
 downloads and verifies the matched APK, installs it, probes native capabilities,
-and executes the same standard 63 CPU cases followed by 63 GPU cases. Installation
+and executes the standard 63 GPU cases. Installation
 is skipped when the headset already has that exact APK. The user must enable
 headset developer mode, use a data cable, grant browser USB access, and approve
 USB debugging inside the headset. Windows drivers and Linux USB permissions can
@@ -31,12 +31,14 @@ intentionally debuggable because the existing authenticated ADB protocol uses
 a sideloaded benchmark runner, not a store-release build. Native numerical kernels
 and report schema version 2 are unchanged.
 
-`browser/controller.mjs` owns the hosted CPU/GPU sequence. It persists session
+`browser/controller.mjs` owns hosted GPU-default sessions and legacy CPU/GPU
+recovery. It persists session
 identities and launch intent in IndexedDB before sending commands, holds a Web
-Lock across both phases, and recovers existing reports after refresh or USB loss.
+Lock throughout the session, and recovers existing reports after refresh or USB loss.
 It never repeats an uncertain native launch. Closing the tab releases USB; the
-current native phase may finish on the headset, but the next phase waits for the
-page to reconnect and validate the final report. Stop is durable, including
+current native phase may finish on the headset; reconnecting recovers and validates
+its final report. For legacy multi-phase sessions, the next phase waits for this
+validation. Stop is durable, including
 between phases and while disconnected. Download/install preparation is abortable.
 If the native process exits without a final report, the browser marks that run
 failed and preserves its validated partial evidence and any completed phase.
@@ -46,8 +48,53 @@ Keep the headset awake with the benchmark app visible during measurement;
 headset standby or leaving the app cancels the native activity and saves partial
 results, with recovery guidance shown on the page.
 Browser storage must remain enabled for recovery. Clearing it removes local run
-history and authentication credentials. No reports or USB credentials are uploaded.
-**Download results JSON** exports both native reports and session state.
+history, pending deliveries, and authentication credentials. Finished native
+reports are sent automatically to the website's report receiver; USB credentials
+and browser session/connection identifiers are never included in that request.
+**Download results JSON** exports the session’s native reports and state.
+
+### Automatic report delivery
+
+There is no separate contribution step. After validating and saving a finished
+native report in IndexedDB, the browser queues its original schema-2 JSON for
+`POST ./api/reports` relative to the website root (including a deployment prefix).
+Complete, failed, and canceled native reports are included so failed correctness
+checks are not lost. In-progress evidence remains in the browser until a final
+native report exists. A process that dies without a final report does not have its
+partial data relabeled as a completed measurement. Existing finished native reports
+are queued on reopening the site too; legacy CPU/GPU phase plans remain intact.
+
+The request body is **only the native report**, including its raw samples,
+correctness results, hardware metadata and build/configuration revisions. It does
+not include the browser's session envelope, USB serial, connection hash, or ADB
+authentication keys. The independent `browser/report-delivery.mjs` queue retries
+with backoff (5 seconds up to 5 minutes) while the page is open, resumes after
+refresh, and keeps a browser copy. Failed delivery never restarts a benchmark or
+blocks Run/Stop. The page shows sending, retrying, or receipt-confirmed storage.
+The public demo does not enter this queue and the receiver rejects simulated tags.
+
+For testing, `uv run python -m src` accepts reports at `POST /api/reports` and
+saves each unchanged JSON body to `engine/.state/submitted-reports/<run-id>.json`.
+These files are ignored by Git and cannot be read through the website.
+`--reports-dir /absolute/private/path` selects another local directory, which must
+be outside the served site. This receiver needs neither PostgreSQL nor a headset
+to test with fixtures. The developer application continues saving native reports
+under `engine/.state/runs/<run-id>/native-report.json` through its existing path.
+
+The receiver accepts JSON up to 32 MiB, validates the existing native schema, and
+atomically creates an immutable file. Identical retries return a receipt for the
+same run; conflicting contents for an existing ID return HTTP 409. A successful
+response must include `stored: true`, matching `run_id`, and `payload_sha256`
+(SHA-256 of the exact request bytes). The local receiver also returns
+`storage: "local"`, `report_sha256` (canonical JSON digest), and `received_at`.
+The browser marks delivery complete only after verifying and saving this receipt.
+Files and receipts establish submitted evidence, **not hardware attestation**;
+software fixtures must not be treated as physical-device qualification.
+
+Production hosting must route the same-origin report endpoint to durable storage
+using this contract. A static-only deployment returns an error and leaves reports
+queued in the browser. This change provides the local testing receiver; it does
+not provision or upload to a public collection service.
 
 ### Build and sign (maintainers only)
 
@@ -97,11 +144,14 @@ other response headers for hosts supporting that file; configure equivalent
 headers elsewhere. Run the site as a top-level page. No CDN scripts or cross-origin
 APK URLs are needed. Hosted navigation omits the local Stats for Nerds application.
 
-For a local preview of the packaged release, `uv run python -m src` serves only
-`dist/` on localhost port 8765. It starts neither desktop ADB nor PostgreSQL.
+For a local preview of the packaged release, `uv run python -m src` serves
+`dist/` on localhost port 8765 and captures submitted reports outside that folder.
+It starts neither desktop ADB nor PostgreSQL and exposes no benchmark control APIs.
 Chrome permits WebUSB on the localhost secure context; remote hosting requires
-HTTPS. `uv run python -m src --developer` opens the existing developer application
-on port 8766, including Stats for Nerds and its local APIs.
+HTTPS. `uv run python main.py` starts Docker, PostgreSQL, and pending SQL, then opens
+the existing developer application on port 8766, including Stats for Nerds and its
+local APIs. `uv run python -m src --developer` remains the server-only alternative.
+See [engine startup](../../engine/README.md).
 
 ### Verification and release qualification
 
@@ -128,6 +178,23 @@ ownership, cancellation and JSON download were observed. Python and browser
 validators agreed on the downloaded reports and summaries. This was a configured
 maintainer computer using the localhost secure context; clean-computer driver
 qualification, public HTTPS testing and a second device remain outstanding.
+
+## Advanced CPU testing
+
+The homepage never runs a CPU comparison or falls back from failed GPU execution.
+**Advanced → Run CPU benchmark** appears only for an executing chip confirmed to
+have no GPU. The user must click it explicitly; the main Run action remains GPU.
+Both session controllers enforce this policy and require native CPU compatibility
+before launching a new CPU session. Native reports and the runner ABI are unchanged.
+Saved sessions retain their original phase plans, including legacy CPU→GPU runs.
+The separate local Stats for Nerds laboratory retains its manual backend controls.
+
+Chip catalog entries may supply `gpu_presence` (`present`, `absent`, or `unknown`)
+and `gpu_presence_source` (an authoritative source URL; required for `absent`).
+Missing metadata is unknown. Conflicting identity or any positive native GPU
+observation prevents CPU eligibility. Vulkan errors and unsupported GPU backends
+never prove absence. No current production catalog chip is marked absent; the CPU
+path is exercised with explicitly synthetic fixtures, not invented hardware facts.
 
 ## Device and processor identity
 
@@ -180,12 +247,13 @@ In the local developer application, Stats for Nerds is available through its nam
 Connection, USB authorization, unsupported hardware, service errors and missing
 native APK guidance are handled inline with Retry. The local toolchain and built
 APK remain developer-host prerequisites; the local homepage does not invoke builds. The existing
-session controller installs the APK, checks capabilities, and runs CPU then GPU.
+session controller installs the APK, checks capabilities, and runs the selected
+processor (GPU by default).
 
 ## Optional device demo
 
 Choose **Try a demo**, pick any catalog device, and select **Connect demo device**.
-Then **Run demo** previews the standard CPU and GPU case lists in about 12 seconds.
+Then **Run demo** previews the standard 63 GPU cases in about 12 seconds.
 Stop, rerun, change devices between runs, or use **Exit demo** to restore the live
 device view. Apple and specialized glasses retain their actual support notes;
 successful simulation does not imply native compatibility.
@@ -204,8 +272,10 @@ the view if a real run appears while the demo is open.
 
 ## Session API and recovery
 
-- `POST /api/benchmark-sessions`: `{serial, request_id}`. Reusing the same request
-  ID returns the original session. A device cannot be reserved by two sessions.
+- `POST /api/benchmark-sessions`: `{serial, request_id, processor?}` with `processor` defaulting to `"gpu"`
+  (also accepts `"cpu"` under the Advanced eligibility policy above). Reusing the same
+  request ID returns the original session; changing its processor is rejected.
+  A device cannot be reserved by two sessions.
 - `GET /api/benchmark-sessions/<id>`: phase state and existing child run identities.
 - `POST /api/benchmark-sessions/<id>/stop`: durable cancellation, including between
   phases. Fatal failure or cancellation prevents the next phase.
@@ -230,7 +300,7 @@ uv run --extra export --group dev python -m layers.export
 uv run --extra export --group dev python -m engine.verify_cpu
 uv run --extra export --group dev python -m engine.build
 uv run --group dev python -m pytest -q
-uv run python -m src --developer
+uv run python main.py
 ```
 
 Both local web interfaces are buildless; the hosted distribution uses the bundler described above. Host CPU correctness

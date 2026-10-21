@@ -2,8 +2,11 @@ export class BrowserStore {
   constructor(indexedDB = globalThis.indexedDB) {
     this.ready = new Promise((resolve, reject) => {
       if (!indexedDB) {reject(Error('Browser storage is unavailable. Enable site storage and retry.')); return;}
-      const open = indexedDB.open('xrbench-browser-v1', 1);
-      open.onupgradeneeded = () => {for (const name of ['sessions', 'reports']) open.result.createObjectStore(name);};
+      const open = indexedDB.open('xrbench-browser-v1', 2);
+      open.onupgradeneeded = () => {
+        for (const name of ['sessions', 'reports', 'report-deliveries'])
+          if (!open.result.objectStoreNames.contains(name)) open.result.createObjectStore(name);
+      };
       open.onsuccess = () => {open.result.onversionchange = () => open.result.close(); resolve(open.result);};
       open.onerror = () => reject(Error('Could not open browser storage. Enable site storage and retry.'));
       open.onblocked = () => reject(Error('Close other xrBench tabs to update browser storage.'));
@@ -21,6 +24,8 @@ export class BrowserStore {
   save(session) {return this.transaction('sessions', 'readwrite', s => s.put(structuredClone(session), session.session_id));}
   report(id) {return this.transaction('reports', 'readonly', s => s.get(id));}
   saveReport(id, report) {return this.transaction('reports', 'readwrite', s => s.put(structuredClone(report), id));}
+  deliveries() {return this.transaction('report-deliveries', 'readonly', s => s.getAll());}
+  saveDelivery(row) {return this.transaction('report-deliveries', 'readwrite', s => s.put(structuredClone(row), row.run_id));}
 }
 
 // Hold the Web Lock until the controller releases it, including disconnected runs.

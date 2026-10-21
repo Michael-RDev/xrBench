@@ -4,6 +4,7 @@ import {deviceView} from '/bench/device-view.mjs';
 import {renderResults} from '/bench/results-view.mjs';
 import {chipEvidence,standaloneChipEvidence,renderChip,clockLabel} from '/bench/chip-view.mjs';
 import {mountHeadset} from '/bench/ascii-headset.mjs';
+import {CPU_RESTRICTION} from '/bench/processor-policy.mjs';
 import {ENABLE_SMOKE_DEMO} from '/bench/features.mjs';
 
 const hosted=document.documentElement.dataset.transport==='webusb';
@@ -49,7 +50,7 @@ function renderDevice(){
     $('device-help').hidden=false;
     $('device-help').textContent=status?.usb_supported===false?'Use desktop Chrome or Edge on the HTTPS website.':view.kind==='multiple'?'Choose your headset, then press Run.':'Press Run to connect and install the runner automatically. Allow USB debugging in your headset.';
   }else if(hosted&&activeSession()){
-    $('device-help').hidden=false;$('device-help').textContent='Keep the headset awake with the benchmark app open until both CPU and GPU tests finish.';
+    $('device-help').hidden=false;$('device-help').textContent='Keep the headset awake with the benchmark app open until the benchmark finishes.';
   }else if(view.kind==='connected'&&!status?.apk_ready){$('device-help').textContent='The developer runner has not been built.';$('device-help').hidden=false;}
   document.querySelector('.device-panel').dataset.state=view.kind;
 }
@@ -68,13 +69,26 @@ function presentChip(source='native'){
   renderChip(document,show?progressView:null,source);
   document.querySelector('.hero').classList.toggle('benchmark-active',show);
   $('back-headset').hidden=!show||!terminal.has(progressView.status);
-  headset.setPresentation({mode:show?'chip':'headset',runKey:presentationKey,processor:progressView?.processor||'cpu',source,animate:show&&animateNext});
+  headset.setPresentation({mode:show?'chip':'headset',runKey:presentationKey,processor:progressView?.processor||'gpu',source,animate:show&&animateNext});
   if(show&&animateNext&&window.innerWidth<=620){
     const stage=$('headset-stage');
     stage.style.scrollMarginTop=(document.querySelector('.hero-actions').offsetHeight+12)+'px';
     stage.scrollIntoView?.({block:'start',behavior:window.matchMedia?.('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
   }
   if(show)animateNext=false;
+}
+function renderDelivery(parent){
+  const el=$('report-delivery-status');el.hidden=!hosted;
+  if(!hosted)return;
+  const delivery=status?.report_delivery,ids=new Set(parent?.phases.map(p=>p.run_id)||[]);
+  const rows=delivery?.reports.filter(r=>ids.has(r.run_id))||[];
+  if(delivery?.error||rows.some(r=>r.status==='pending'&&r.error)){
+    el.textContent='Report saved in this browser. Sending will retry automatically.';
+  }else if(rows.some(r=>r.status!=='sent')){
+    el.textContent='Sending benchmark report… A copy stays in this browser.';
+  }else if(rows.length){
+    el.textContent=rows.every(r=>r.receipt?.storage==='local')?'Report saved locally.':'Report sent. A copy stays in this browser.';
+  }else el.textContent='Finished benchmark reports are sent automatically. Demo results are never sent.';
 }
 function render(){
   const nativeRunning=activeSession()||active();
@@ -89,16 +103,18 @@ function render(){
   const parent=session(),running=activeSession()||active(),run=parent||job()||report;
   const stopping=running?.cancel_requested;
   $('run-icon').textContent=running?'■':'▶';
-  $('run-label').textContent=stopping?'Stopping…':busy?(running?'Stopping…':'Starting…'):running?'Stop':run?'Run again':'Run';
-  $('run').setAttribute('aria-label',running?'Stop benchmark':'Run CPU then GPU tests');$('run').disabled=(!connected&&!running)||busy||!!stopping||(hosted&&status?.usb_supported===false&&!running);$('run').setAttribute('aria-busy',String(busy||!!stopping));
-  const progress=run?(run.error||(terminal.has(run.status)?`Benchmark ${run.status}. Results are preserved below.`:run.message||(parent?'CPU → GPU · native execution':'Native benchmark running'))):'';
+  $('run-label').textContent=stopping?'Stopping…':busy?(running?'Stopping…':'Starting…'):running?'Stop':run?'Run GPU again':'Run GPU';
+  $('run').setAttribute('aria-label',running?'Stop benchmark':'Run GPU benchmark');$('run').disabled=(!connected&&!running)||busy||!!stopping||(hosted&&status?.usb_supported===false&&!running);$('run').setAttribute('aria-busy',String(busy||!!stopping));
+  const progress=run?(run.error||(terminal.has(run.status)?`Benchmark ${run.status}. Results are preserved below.`:run.message||(parent?parent.phases.map(p=>p.processor.toUpperCase()).join(' → ')+' · native execution':'Native benchmark running'))):'';
   $('run-status').textContent=progress;$('run-status').hidden=!progress;
   renderResults(document,status,job(),report);
-  $('timing-note').textContent=report?.timing_scope||'Native execution timings. CPU and GPU results stay separate and remain local.';
-  renderDevice();
+  $('timing-note').textContent=report?.timing_scope||'Native execution timings.';
+  renderDelivery(parent);
+  renderDevice();renderAdvanced();
   progressView=chipEvidence(parent,reports,status?.catalog?.cases||[])||standaloneChipEvidence(job()||report,report,status?.catalog?.cases||[]);
   presentChip();
-  $('notice-message').textContent=serviceError||actionError;$('notice').hidden=!(serviceError||actionError);
+  const issue=parent?.phases.find(p=>p.status==='unsupported')?.reason;
+  $('notice-message').textContent=serviceError||actionError||issue||'';$('notice').hidden=!(serviceError||actionError||issue);
   if($('setup-help'))$('setup-help').hidden=hosted||!/benchmark app is not ready|\bAPK\b/i.test(actionError);
   $('download-session').hidden=!hosted||!parent||!parent.phases.some(p=>p.run?.report_available);
   const buttons=$('result-processors');buttons.hidden=!parent;
@@ -109,11 +125,11 @@ function renderDemo(preview){
   const running=parent?.status==='running';
   $('run-icon').textContent=running?'■':'▶';
   $('run-label').textContent=running?'Stop demo':parent?'Run demo again':'Run demo';
-  $('run').setAttribute('aria-label',running?'Stop demo':'Run simulated CPU then GPU tests');
+  $('run').setAttribute('aria-label',running?'Stop demo':'Run simulated GPU benchmark');
   $('run').disabled=preview.stage!=='connected'||!controller.ready;$('run').setAttribute('aria-busy','false');
-  $('run-status').textContent=parent?(running?'Simulated CPU → GPU · sample data only':parent.status==='complete'?'Demo complete. All results below are simulated.':'Demo stopped. Partial sample results are shown below.'):preview.stage==='connected'?'Ready for a simulated CPU → GPU run.':'Choose a device to preview the benchmark.';
+  $('run-status').textContent=parent?(running?`Simulated ${parent.processor.toUpperCase()} · sample data only`:parent.status==='complete'?'Demo complete. All results below are simulated.':'Demo stopped. Partial sample results are shown below.'):preview.stage==='connected'?'Ready for a simulated GPU run.':'Choose a device to preview the benchmark.';
   $('run-status').hidden=false;$('notice').hidden=true;
-  $('download-session').hidden=true;
+  $('download-session').hidden=true;$('report-delivery-status').hidden=true;renderAdvanced(preview);
   $('device-picker').hidden=true;$('device-retry').hidden=true;$('device-demo-badge').hidden=false;
   $('device-name').textContent=preview.identity?.device_name||'Explore without a headset';
   $('device-chip').textContent=preview.identity?.chip_name||'';
@@ -177,11 +193,24 @@ $('download-session').onclick=async()=>{
     const link=document.createElement('a');link.href=url;link.download=selectedSession+'.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }catch(error){actionError=error.message;render();}
 };
-$('run').onclick=async()=>{
+function cpuIdentity(){
+  const view=deviceView(status,serviceError,selectedSerial),parent=session();
+  return parent?.capabilities_checked&&parent.connection_id===view.connectionId?parent.identity:view.identity;
+}
+function renderAdvanced(preview=null){
+  const identity=preview?preview.identity:cpuIdentity();
+  $('advanced-cpu').hidden=!identity?.cpu_eligible;
+  $('run-cpu').textContent=preview?'Run CPU demo':'Run CPU benchmark';
+  $('run-cpu').disabled=preview?preview.stage!=='connected'||preview.session?.status==='running':busy||!!activeSession()||!!active()||!connected||!deviceView(status,serviceError,selectedSerial).authorized;
+  $('cpu-reason').textContent=preview?'Simulated chip with no GPU. Preview CPU testing with sample data.':'This chip is confirmed to have no GPU. CPU capability will be checked before execution.';
+}
+async function runBenchmark(processor='gpu'){
   if(demo&&demo.controller.snapshot.stage!=='closed'){
-    if(demo.controller.snapshot.session?.status==='running')demo.controller.stop();else{demoGeneration++;animateNext=true;demo.controller.start();}return;
+    if(demo.controller.snapshot.session?.status==='running'){if(processor==='gpu')demo.controller.stop();}
+    else if(processor!=='cpu'||demo.controller.snapshot.identity?.cpu_eligible){demoGeneration++;animateNext=true;demo.controller.start(processor);}return;
   }
   if(busy)return;const running=activeSession()||active();if((!connected&&!running)||running?.cancel_requested)return;actionError='';
+  if(processor==='cpu'&&(running||!cpuIdentity()?.cpu_eligible)){actionError=CPU_RESTRICTION;render();return;}
   let device;
   if(!running&&!hosted){
     const view=deviceView(status,'',selectedSerial);device=status.devices.find(d=>d.serial===view.serial&&d.state==='device'&&d.supported);
@@ -193,13 +222,16 @@ $('run').onclick=async()=>{
     if(running?.session_id){const stopped=await api('/api/benchmark-sessions/'+running.session_id+'/stop',{});status.benchmark_sessions=status.benchmark_sessions.map(s=>s.session_id===stopped.session_id?stopped:s);}
     else if(running){const stopped=await api('/api/runs/'+running.run_id+'/stop',{});status.jobs=status.jobs.map(r=>r.run_id===stopped.run_id?stopped:r);}
     else{
-      pendingRequest ||= {serial:hosted?selectedSerial:device.serial,request_id:crypto.randomUUID().replaceAll('-','')};
-      const created=await (hosted?browserService.start(pendingRequest.serial,pendingRequest.request_id):api('/api/benchmark-sessions',pendingRequest));animateNext=true;selectedSession=created.session_id;selected=created.phases?.[created.current_phase]?.run?.run_id||null;report=null;pendingRequest=null;
+      if(pendingRequest&&pendingRequest.processor!==processor)pendingRequest=null;
+      pendingRequest ||= {serial:hosted?(selectedSerial||deviceView(status,'',selectedSerial).serial):device.serial,request_id:crypto.randomUUID().replaceAll('-',''),processor};
+      const created=await (hosted?browserService.start(pendingRequest.serial,pendingRequest.request_id,pendingRequest.processor):api('/api/benchmark-sessions',pendingRequest));animateNext=true;selectedSession=created.session_id;selected=created.phases?.[created.current_phase]?.run?.run_id||null;report=null;pendingRequest=null;
       if(created.phases?.[created.current_phase]?.run)status.jobs=[created.phases[created.current_phase].run,...status.jobs.filter(j=>j.run_id!==selected)];
       status.benchmark_sessions=[created,...(status.benchmark_sessions||[]).filter(s=>s.session_id!==created.session_id)];
     }
   }catch(error){if(hosted)console.warn('xrBench connection failed',error.cause||error);actionError=error.message;}finally{busy=false;render();}
-};
+}
+$('run').onclick=()=>runBenchmark();
+$('run-cpu').onclick=()=>runBenchmark('cpu');
 await poll();const polling=setInterval(poll,1000);
 const clock=setInterval(()=>{if(progressView?.active&&!document.hidden&&(!demo||demo.controller.snapshot.stage==='closed'))$('chip-timer').textContent=clockLabel(Math.max(0,Date.now()-(session()?.created_at||job()?.created_at||Date.now()/1000)*1000));},250);
 window.addEventListener('pagehide',event=>{if(event.persisted)return;clearInterval(polling);clearInterval(clock);headset.destroy();demo?.destroy();browserService?.dispose();});

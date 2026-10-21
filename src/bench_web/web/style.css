@@ -260,3 +260,8 @@ button,a,select{touch-action:manipulation}select:focus-visible{outline:3px solid
   .benchmark-active #headset-stage{grid-row:4}
   .benchmark-active .compute-view{grid-row:5}
 }
+
+.advanced-cpu{margin:14px 0;font-size:12px;color:var(--muted)}
+.advanced-cpu summary{cursor:pointer;width:fit-content;padding:8px 0}
+.advanced-cpu p{max-width:48ch;line-height:1.6;margin:8px 0 12px}
+.chip-regions{grid-template-columns:repeat(auto-fit,minmax(0,1fr))}

@@ -4,6 +4,14 @@ from pathlib import Path
 from engine.reports import digest, validate
 
 
+class SchemaNotReady(RuntimeError):
+    """The operator must apply the versioned SQL files before starting the server."""
+
+
+def migration_files():
+    return sorted(Path(__file__).with_name("migrations").glob("*.sql"))
+
+
 class Store:
     def __init__(self, dsn):
         self.dsn = dsn
@@ -13,21 +21,26 @@ class Store:
         return psycopg.connect(self.dsn, connect_timeout=3)
 
     def migrate(self):
+        """Apply pending SQL; used by main.py setup and explicit administrative calls."""
         with self.connect() as db:
-            db.execute("SELECT pg_advisory_xact_lock(871624931)")
-            db.execute("CREATE SCHEMA IF NOT EXISTS xrgpu_benchmarks")
-            db.execute("SET LOCAL search_path TO xrgpu_benchmarks")
-            exists = db.execute("SELECT to_regclass('xrgpu_benchmarks.schema_migrations')").fetchone()[0]
-            applied = {row[0] for row in db.execute("SELECT version FROM schema_migrations")} if exists else set()
-            for path in sorted(Path(__file__).with_name("migrations").glob("*.sql")):
-                version = int(path.name.split("_")[0])
-                if version not in applied:
-                    db.execute(path.read_text())
-                    db.execute("INSERT INTO schema_migrations(version) VALUES (%s)", (version,))
+            db.autocommit = True
+            db.execute("SET lock_timeout = '15s'")
+            db.execute("SET statement_timeout = '120s'")
+            for path in migration_files():
+                db.execute(path.read_text())
 
     def health(self):
-        with self.connect() as db:
-            db.execute("SELECT 1 FROM xrgpu_benchmarks.schema_migrations LIMIT 1")
+        from psycopg.errors import InvalidSchemaName, UndefinedTable
+        try:
+            with self.connect() as db:
+                applied = {row[0] for row in db.execute("SELECT version FROM xrgpu_benchmarks.schema_migrations")}
+                required = {int(path.name.split('_')[0]) for path in migration_files()}
+                if not required.issubset(applied):
+                    raise SchemaNotReady("Apply the pending SQL files in engine/db/migrations/ manually.")
+                db.execute("SELECT 1 FROM xrgpu_benchmarks.benchmark_runs LIMIT 0")
+                db.execute("SELECT 1 FROM xrgpu_benchmarks.benchmark_results LIMIT 0")
+        except (InvalidSchemaName, UndefinedTable):
+            raise SchemaNotReady("Apply the SQL files in engine/db/migrations/ manually.") from None
         return True
 
     def put(self, report):

@@ -1,14 +1,17 @@
 import {BrowserController} from './controller.mjs';
 import {BrowserStore} from './store.mjs';
 import {WebUsbTransport} from './transport.mjs';
+import {ReportDelivery} from './report-delivery.mjs';
 
 export function createBrowserService() {
   // The production bundle is bench/app.js; all runtime assets share its HTTPS origin.
-  const controller = new BrowserController({transport: new WebUsbTransport(), store: new BrowserStore(),
+  const store = new BrowserStore();
+  const delivery = new ReportDelivery({store, endpoint: new URL('../api/reports', import.meta.url)});
+  const controller = new BrowserController({transport: new WebUsbTransport(), store, delivery,
     manifestUrl: new URL('../runner/manifest.json', import.meta.url)});
   return {
     controller,
-    start: (serial, requestId) => controller.start(serial, requestId),
+    start: (serial, requestId, processor = 'gpu') => controller.start(serial, requestId, processor),
     exportSession: id => controller.exportSession(id),
     dispose: () => controller.dispose(),
     async request(path, body) {

@@ -112,3 +112,17 @@ def test_browser_device_identity_matches_python(device, report):
     actual = browser_contract(dict(report=report, config=report['configuration'], catalog=catalog(), device=device, device_catalog=CATALOG))['identity']
     for field in ('device_id', 'chip_id', 'execution_location', 'identity_source'):
         assert actual[field] == expected[field]
+
+
+@pytest.mark.parametrize('native', [{}, {'gpu': 'Detected GPU'}, {'vulkan': False},
+    {'backends': {'executorch_vulkan': {'compatible': True}}}, {'soc_model': 'Apple M5'}])
+def test_browser_and_python_agree_on_gpu_absence_policy(native, report, monkeypatch):
+    from engine.devices import CATALOG
+    chip = next(c for c in CATALOG['chips'] if c['id'] == 'xr2-gen2')
+    monkeypatch.setitem(chip, 'gpu_presence', 'absent')
+    monkeypatch.setitem(chip, 'gpu_presence_source', 'https://fixture.invalid/no-gpu-spec')
+    device = dict(model='Quest 3', **native)
+    expected = identify(device)
+    actual = browser_contract(dict(report=report, config=report['configuration'], catalog=catalog(), device=device, device_catalog=CATALOG))['identity']
+    for field in ('gpu_presence', 'gpu_presence_source', 'cpu_eligible'):
+        assert actual[field] == expected[field]

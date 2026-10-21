@@ -3,20 +3,23 @@ import assert from 'node:assert/strict';
 import {BrowserController} from '../web/browser/controller.mjs';
 import {EvidenceError} from '../web/browser/evidence.mjs';
 import {MissingFile} from '../web/browser/transport.mjs';
+import {ReportDelivery} from '../web/browser/report-delivery.mjs';
+import {sha256} from '../web/browser/evidence.mjs';
 import {manifest, nativeReport, MemoryStore} from './browser-fixtures.mjs';
 
 const settle = async () => {for (let i = 0; i < 30; i++) await new Promise(r => setImmediate(r));};
 function fixture(options = {}) {
-  const m = manifest(), store = options.store || new MemoryStore(), launches = [], stops = [], calls = [], devices = [{serial: 'one', name: 'Quest 3'}];
+  const m = structuredClone(manifest()); options.manifest?.(m);
+  const store = options.store || new MemoryStore(), launches = [], stops = [], calls = [], devices = [{serial: 'one', name: 'Quest 3'}];
   let connected = true, reportAvailable = false, releaseCount = 0, pauses = [], reports = new Map();
   const transport = {
     supported: true, choose: () => Promise.resolve(devices[0]), discover: async () => connected ? devices : [],
     connect: async () => {calls.push('connect'); if (!connected) throw Error('disconnected');}, close: async () => {},
-    properties: async () => ({model: 'Quest 3', sdk: 32, abi: 'arm64-v8a', soc_model: 'Qualcomm Snapdragon XR2 Gen 2'}),
+    properties: async () => ({model: 'Quest 3', sdk: 32, abi: 'arm64-v8a', soc_model: 'Qualcomm Snapdragon XR2 Gen 2', ...options.properties}),
     install: async (m, url, signal, message) => {calls.push('install'); message('Installing'); await options.install?.(signal); signal.throwIfAborted();},
     installedHash: async () => m.apk_sha256,
     isRunning: async () => true,
-    probe: async () => {calls.push('probe'); return {profile_version: 1, backends: {executorch_cpu: {compatible: true}, executorch_vulkan: {compatible: !options.noGpu}}};},
+    probe: async () => {calls.push('probe'); return {profile_version: 1, backends: {executorch_cpu: {compatible: true}, executorch_vulkan: {compatible: !options.noGpu}}, ...options.capabilities};},
     launch: async (_, config) => {launches.push(structuredClone(config)); if (options.launchError) throw Error('USB dropped after launch');},
     read: async (_, id, filename) => {
       if (!connected) throw Error('disconnected');
@@ -29,6 +32,7 @@ function fixture(options = {}) {
     stop: async (_, id) => {stops.push(id); reports.set(id, nativeReport(launches.find(c => c.run_id === id) || options.previousConfig, 'canceled')); reportAvailable = true;},
   };
   const controller = new BrowserController({transport, store, manifestUrl: 'https://fixture.test/runner/manifest.json',
+    delivery: options.delivery?.(store),
     fetcher: async () => ({ok: true, json: async () => m}), lock: options.lock || (async () => () => releaseCount++),
     sleep: () => new Promise(r => pauses.push(r))});
   return {m, store, transport, controller, launches, stops, calls, reports, get releaseCount() {return releaseCount;},
@@ -43,11 +47,58 @@ function fixture(options = {}) {
         assert.ok(!controller.workers.size || pauses.length, 'Controller did not settle');
       }
     },
-    async start() {await controller.init(); const s = await controller.start('one', 'same-request'); await settle(); return controller.sessions.find(v => v.session_id === s.session_id);},
+    async start(processor) {
+      if(options.legacy) await store.save({session_id:'bench-'+'a'.repeat(32),request_id:'same-request',serial:'one',status:'starting',created_at:Date.now()/1000,current_phase:0,cancel_requested:false,manifest:structuredClone(m),
+        phases:['cpu','gpu'].map((p,i)=>({processor:p,backend:m.configurations[p].backend,configuration:structuredClone(m.configurations[p]),run_id:'run-'+String(i+1).repeat(32),status:'pending'}))});
+      await controller.init(); const s = await controller.start('one', 'same-request', ...(processor ? [processor] : [])); await settle(); return controller.sessions.find(v => v.session_id === s.session_id);},
     async close() {controller.dispose(); await this.step();}};
 }
-test('one click installs, probes, then runs exactly 63 CPU and 63 GPU cases', async () => {
-  const f = fixture(); try {
+test('finished native runs send their reports automatically without sending USB/session state', async () => {
+  for (const status of ['complete', 'failed', 'canceled']) {
+    const sent = [], f = fixture({delivery: store => new ReportDelivery({store, endpoint: '/api/reports', fetcher: async (url, {body}) => {
+      sent.push(JSON.parse(body)); return {ok: true, json: async () => ({stored: true, storage: 'local', run_id: sent.at(-1).run_id,
+        payload_sha256: await sha256(new TextEncoder().encode(body))})};
+    }})});
+    try {
+      const s = await f.start(); await f.step(); assert.equal(sent.length, 0);
+      const native = nativeReport(f.launches[0], status); f.reports.set(native.run_id, native); f.available();
+      await f.step(); await f.controller.delivery.task;
+      assert.equal(s.status, status); assert.equal(sent.length, 1); assert.deepEqual(sent[0], native);
+      assert.equal(sent[0].results.length, 63); assert.equal(sent[0].backend, 'executorch_vulkan');
+      assert.equal(sent[0].serial, undefined); assert.equal(sent[0].connection_id, undefined); assert.equal(sent[0].manifest, undefined);
+      await f.controller.snapshot(); await f.controller.delivery.task; assert.equal(sent.length, 1);
+    } finally {await f.close();}
+  }
+});
+
+test('a receiver outage cannot fail, rerun, or remove a completed native benchmark', async () => {
+  const f = fixture({delivery: store => new ReportDelivery({store, fetcher: async () => {throw Error('offline');}})});
+  try {
+    const s = await f.start(); await f.step(); f.available(); await f.step(); await f.controller.delivery.task;
+    assert.equal(s.status, 'complete'); assert.equal(f.launches.length, 1);
+    assert.equal((await f.controller.exportSession(s.session_id)).reports.length, 1);
+    assert.equal((await f.controller.snapshot()).report_delivery.reports[0].status, 'pending');
+  } finally {await f.close();}
+});
+
+test('refresh recovers native evidence saved before delivery was queued, without headset commands', async () => {
+  const f = fixture(); let g, sent = 0;
+  try {
+    await f.start(); await f.step(); f.available(); await f.step(); await f.close();
+    // A damaged historical record must not prevent newer evidence being delivered.
+    const invalid = structuredClone(f.store.items[0]); invalid.session_id = 'bench-' + 'f'.repeat(32);
+    invalid.phases[0].run_id = 'run-' + 'f'.repeat(32);
+    await f.store.saveReport(invalid.phases[0].run_id, {native: {status: 'complete', schema_version: 0}});
+    f.store.items.unshift(invalid);
+    g = fixture({store: f.store, delivery: store => new ReportDelivery({store, fetcher: async (_, {body}) => {
+      sent++; return {ok: true, json: async () => ({stored: true, run_id: JSON.parse(body).run_id, payload_sha256: await sha256(new TextEncoder().encode(body))})};
+    }})});
+    await g.controller.snapshot(); await g.controller.delivery.task;
+    assert.equal(sent, 1); assert.deepEqual(g.calls, []); assert.deepEqual(g.launches, []);
+  } finally {await f.close(); await g?.close();}
+});
+test('a saved legacy session installs, probes, then preserves its original CPU/GPU plan', async () => {
+  const f = fixture({legacy: true}); try {
     const s = await f.start(); assert.deepEqual(f.calls, ['connect', 'install', 'probe']);
     await f.step(); assert.equal(f.launches.length, 1); assert.equal(f.launches[0].backend, 'executorch_cpu');
     assert.equal(f.launches[0].cases.length, 63); f.available();
@@ -58,7 +109,7 @@ test('one click installs, probes, then runs exactly 63 CPU and 63 GPU cases', as
   } finally {await f.close();}
 });
 test('terminal progress alone never advances and stopping between phases never launches GPU', async () => {
-  const f = fixture(); try {
+  const f = fixture({legacy: true}); try {
     const s = await f.start(); await f.step();
     const read = f.transport.read;
     f.transport.read = async (...args) => args[2] === 'progress.json' ? {run_id: args[1], status: 'complete', completed_cases: 63} : read(...args);
@@ -73,7 +124,7 @@ test('Stop during installation aborts preparation without probing or launching',
   finally {await f.close();}
 });
 test('refresh after uncertain launch recovers the same run without replaying install, probe, or launch', async () => {
-  const f = fixture({launchError: true}); let g;
+  const f = fixture({launchError: true, legacy: true}); let g;
   try {
     const s = await f.start(); await f.step(); assert.equal(s.status, 'disconnected');
     const config = f.launches[0]; await f.close();
@@ -85,7 +136,7 @@ test('refresh after uncertain launch recovers the same run without replaying ins
   } finally {await f.close(); await g?.close();}
 });
 test('unsupported GPU preserves the completed CPU results', async () => {
-  const f = fixture({noGpu: true}); try {
+  const f = fixture({noGpu: true, legacy: true}); try {
     const s = await f.start(); await f.step(); f.available(); await f.step(); await f.step();
     assert.equal(s.status, 'complete'); assert.equal(s.partial, true); assert.equal(s.phases[1].status, 'unsupported'); assert.equal(f.launches.length, 1);
   } finally {await f.close();}
@@ -104,7 +155,7 @@ test('headset lifecycle cancellation preserves results and explains how to rerun
 });
 
 test('a native GPU crash preserves CPU and partial GPU evidence without replaying either phase', async () => {
-  const f = fixture(); try {
+  const f = fixture({legacy: true}); try {
     const s = await f.start(); await f.step(); f.available(); await f.step(); await f.step();
     assert.equal(s.current_phase, 1); assert.equal(f.launches.length, 2);
     f.reports.set(s.phases[1].run_id, nativeReport(f.launches[1], 'running'));
@@ -127,14 +178,14 @@ test('a missing report and stopped app ends an uncertain launch without a replac
 });
 
 test('a terminal report written before process exit wins over the liveness check', async () => {
-  const f = fixture(); try {
+  const f = fixture({legacy: true}); try {
     const s = await f.start(); await f.step(); f.available(); f.transport.isRunning = async () => false;
     await f.step(); assert.equal(s.phases[0].status, 'complete'); assert.equal(s.current_phase, 1);
   } finally {await f.close();}
 });
 test('malformed evidence and changed website release cannot advance to GPU', async () => {
   for (const corrupt of [true, false]) {
-    const f = fixture(); try {
+    const f = fixture({legacy: true}); try {
       const s = await f.start(); await f.step(); f.available();
       if (corrupt) {const r = nativeReport(f.launches[0]); r.configuration.backend = 'executorch_vulkan'; f.reports.set(r.run_id, r);}
       else f.controller.manifest = {...f.m, apk_sha256: 'c'.repeat(64)};
@@ -229,4 +280,58 @@ test('Stop accepted while launch intent is being saved prevents native execution
     await [...f.controller.workers.values()][0]?.task;
     assert.equal(s.status, 'canceled'); assert.equal(f.launches.length, 0);
   } finally {release?.(); await f.close();}
+});
+
+const absentChip = m => Object.assign(m.device_catalog.chips.find(c => c.id === 'xr2-gen2'),
+  {gpu_presence: 'absent', gpu_presence_source: 'https://fixture.invalid/no-gpu-spec'});
+test('default Run launches only 63 GPU cases and exports one report', async () => {
+  const f = fixture(); try {
+    const s = await f.start(); await f.step();
+    assert.equal(s.processor, 'gpu'); assert.equal(s.phases.length, 1);
+    assert.equal(f.launches[0].backend, 'executorch_vulkan'); assert.equal(f.launches[0].cases.length, 63);
+    f.available(); await f.step(); assert.equal(s.status, 'complete');
+    assert.equal(f.launches.length, 1); assert.equal((await f.controller.exportSession(s.session_id)).reports.length, 1);
+    assert.equal((await f.controller.start('one', 'same-request')).session_id, s.session_id);
+    await assert.rejects(() => f.controller.start('one', 'same-request', 'cpu'), /different processor plan/);
+  } finally {await f.close();}
+});
+test('unsupported GPU ends explicitly without a CPU launch', async () => {
+  const f = fixture({noGpu: true}); try {
+    const s = await f.start(); await f.step();
+    assert.equal(s.status, 'complete'); assert.equal(s.partial, true); assert.equal(s.phases.length, 1);
+    assert.equal(s.phases[0].status, 'unsupported'); assert.ok(s.error); assert.equal(f.launches.length, 0);
+  } finally {await f.close();}
+});
+test('CPU requests require sourced absence and a compatible native CPU, never just failed Vulkan', async () => {
+  for (const options of [
+    {noGpu: true},
+    {manifest: absentChip, noGpu: true, eligible: true},
+    {manifest: absentChip, noGpu: true, capabilities: {gpu: 'Native GPU'}},
+    {manifest: absentChip, noGpu: true, capabilities: {vulkan: true}},
+    {manifest: absentChip, noGpu: false},
+    {manifest: absentChip, noGpu: true, capabilities: {backends: {executorch_cpu: {compatible: false}}}},
+    {manifest: absentChip, noGpu: true, properties: {soc_model: 'Apple M5'}},
+  ]) {
+    const f = fixture(options); try {
+      const s = await f.start('cpu'); await f.step();
+      assert.equal(f.launches.length, options.eligible ? 1 : 0);
+      if (options.eligible) {
+        assert.equal(s.phases.length, 1); assert.equal(f.launches[0].backend, 'executorch_cpu');
+        await assert.rejects(() => f.controller.start('one', 'same-request', 'gpu'), /different processor plan/);
+        f.available(); await f.step(); assert.equal(s.status, 'complete');
+      } else assert.ok(['failed', 'complete'].includes(s.status));
+    } finally {await f.close();}
+  }
+});
+test('GPU launch interrupted by disconnect recovers its single phase without replay', async () => {
+  const f = fixture({launchError: true}); let g;
+  try {
+    const s = await f.start(); await f.step(); const config = f.launches[0];
+    assert.equal(s.status, 'disconnected'); await f.close();
+    g = fixture({store: f.store, previousConfig: config}); g.available();
+    await g.controller.snapshot(); await g.step();
+    const restored = g.controller.sessions[0];
+    assert.equal(restored.status, 'complete'); assert.equal(restored.phases.length, 1);
+    assert.equal(restored.phases[0].run_id, config.run_id); assert.equal(g.launches.length, 0);
+  } finally {await f.close(); await g?.close();}
 });

@@ -13,6 +13,7 @@ const paths={
   '/shared/session.mjs':'engine/web/session.mjs',
   '/stats/view-model.mjs':'src/stats_for_nerds/web/view-model.mjs',
   '/stats/app.js':'src/stats_for_nerds/web/app.js',
+  '/bench/processor-policy.mjs':'src/bench_web/web/processor-policy.mjs',
   '/bench/app.js':'src/bench_web/web/app.js',
   '/bench/device-view.mjs':'src/bench_web/web/device-view.mjs',
   '/bench/results-view.mjs':'src/bench_web/web/results-view.mjs',
@@ -51,14 +52,15 @@ async function page(kind,report=null,stateOverrides={},options={}){
       if(state.benchmark_sessions?.length&&state.jobs.length&&fixtureOptions.syncSession!==false){const s=state.benchmark_sessions[0];s.phases[0].run=state.jobs[0];s.status=state.jobs[0].status;s.cancel_requested=state.jobs[0].cancel_requested;s.phases[0].status=s.status;}
       value=structuredClone(state);
     }
-    else if(path==='/api/device-catalog')value=devicesCatalog;
+    else if(path==='/api/device-catalog')value=fixtureOptions.deviceCatalog||devicesCatalog;
     else if(path==='/api/benchmark-sessions'){
-      assert.deepEqual(Object.keys(body).sort(),['request_id','serial']);
+      assert.deepEqual(Object.keys(body).sort(),['processor','request_id','serial']);
       const runId=++nativeStarts===1?id:'run-'+String(nativeStarts).padStart(32,'d');
       const sessionId=nativeStarts===1?benchId:'bench-'+String(nativeStarts).padStart(32,'e');
-      const job={run_id:runId,status:'running',configuration:{mode:'isolated',preset:'smoke',backend:'executorch_cpu',cases:catalog.cases.map(c=>c.id)},message:'Test 1 of 63',storage:'pending'};
-      state.jobs=[job];value={session_id:sessionId,status:'running',created_at:Date.now()/1000,current_phase:0,identity:{device_id:'quest-3'},connection_id:body.serial,
-        phases:[{processor:'cpu',backend:'executorch_cpu',status:'running',run_id:runId,run:job,configuration:job.configuration},{processor:'gpu',backend:'executorch_vulkan',status:'pending',run_id:'run-'+'c'.repeat(32),configuration:job.configuration}]};
+      const processor=body.processor||'gpu',backend=processor==='cpu'?'executorch_cpu':'executorch_vulkan';
+      const job={run_id:runId,status:'running',configuration:{mode:'isolated',preset:'smoke',backend,cases:catalog.cases.map(c=>c.id)},message:'Test 1 of 63',storage:'pending'};
+      state.jobs=[job];value={session_id:sessionId,status:'running',created_at:Date.now()/1000,current_phase:0,identity:state.devices[0]?.identity||{device_id:'quest-3'},connection_id:state.devices[0]?.connection_id||body.serial,processor,
+        phases:[{processor,backend,status:'running',run_id:runId,run:job,configuration:job.configuration}]};
       state.benchmark_sessions=[value];
     }
     else if(path.startsWith('/api/saved'))value={runs:[],next_offset:null};
@@ -78,8 +80,8 @@ async function page(kind,report=null,stateOverrides={},options={}){
   };
   window.__browserService={
     request:async(path,body)=>(await window.fetch(path,{body:body===undefined?undefined:JSON.stringify(body)})).json(),
-    start:async(serial,request_id)=>{
-      const s=await (await window.fetch('/api/benchmark-sessions',{body:JSON.stringify({serial,request_id})})).json();
+    start:async(serial,request_id,processor)=>{
+      const s=await (await window.fetch('/api/benchmark-sessions',{body:JSON.stringify({serial,request_id,processor})})).json();
       if(options.preparing){state.jobs=[];s.status='starting';s.message='Downloading headset runner…';for(const p of s.phases){delete p.run;p.status='pending';}}
       return s;
     },
@@ -132,6 +134,25 @@ test('hosted Run ignores local APK setup and Stop remains available while downlo
   }finally{p.close();}
 });
 
+test('hosted reports show automatic sending, retry, and confirmed local capture without an extra action',async()=>{
+  const p=await page('bench',null,{}, {hosted:true});
+  try{
+    const doc=p.window.document,notice=doc.getElementById('report-delivery-status');
+    assert.equal(notice.hidden,false);assert.match(notice.textContent,/sent automatically/);
+    doc.getElementById('run').click();await drain();
+    const location=p.window.location.href;
+    p.state.report_delivery={reports:[{run_id:id,status:'sending'}]};await p.tick();
+    assert.match(notice.textContent,/Sending benchmark report/);
+    p.state.report_delivery.reports[0]={run_id:id,status:'pending',error:'offline'};await p.tick();
+    assert.match(notice.textContent,/retry automatically/);
+    p.state.report_delivery.reports[0]={run_id:id,status:'sent',receipt:{storage:'local'}};await p.tick();
+    assert.equal(notice.textContent,'Report saved locally.');
+    assert.equal(doc.getElementById('run-label').textContent,'Stop');
+    assert.equal(p.window.location.href,location);
+    assert.equal(doc.querySelector('[id*=contribute],[id*=upload]'),null);
+  }finally{p.close();}
+});
+
 test('native progress and case evidence remain available without visualization components',async()=>{
   const p=await page('bench');
   try{
@@ -145,8 +166,8 @@ test('native progress and case evidence remain available without visualization c
     const panel=doc.getElementById('chip-dashboard');
     assert.equal(panel.hidden,false);
     assert.equal(doc.querySelector('#scene,canvas,#viewer-controls,#reset-view,.assembly-order,.chip-region-key'),null);
-    assert.match(panel.textContent,/CPU/);
-    assert.equal(doc.querySelectorAll('#chip-case-evidence li').length,126);
+    assert.match(panel.textContent,/GPU/);
+    assert.equal(doc.querySelectorAll('#chip-case-evidence li').length,63);
   }finally{p.close();}
 });
 
@@ -175,7 +196,7 @@ test('Run beneath the description starts the full suite once, preserves selectio
     assert.equal(doc.querySelector('#stats-link').getAttribute('href'),'/stats/?run='+id);
     assert.equal(new URLSearchParams(p.window.location.search).get('run'),id);assert.equal(new URLSearchParams(p.window.location.search).get('session'),benchId);
     assert.equal(doc.querySelector('#run-label').textContent,'Stop');
-    assert.match(doc.querySelector('#run-status').textContent,/CPU → GPU/);
+    assert.match(doc.querySelector('#run-status').textContent,/GPU · native execution/);
     assert.equal(doc.querySelector('#run-status').hidden,false);
     assert.equal(doc.querySelector('#results').hidden,false);
     assert.equal(doc.querySelectorAll('.layer-group').length,25);
@@ -190,7 +211,7 @@ test('Run beneath the description starts the full suite once, preserves selectio
     p.state.jobs[0].status='canceled';await p.tick();
     assert.equal(doc.querySelector('#run-phase').textContent,'Run stopped');
     assert.equal(doc.querySelector('#run').disabled,false);
-    assert.equal(doc.querySelector('#run-label').textContent,'Run again');
+    assert.equal(doc.querySelector('#run-label').textContent,'Run GPU again');
   }finally{p.close();}
 });
 
@@ -251,7 +272,7 @@ test('live layer evidence advances without another Run and preserves expanded gr
     report.status='complete';p.state.jobs[0].status='complete';p.state.jobs[0].report_revision='two';
     await p.tick();
     assert.equal(doc.querySelector('#run-phase').textContent,'Run complete');
-    assert.equal(doc.querySelector('#run-label').textContent,'Run again');
+    assert.equal(doc.querySelector('#run-label').textContent,'Run GPU again');
     assert.equal(doc.querySelector('#results-link').getAttribute('href'),'#layer-results');
     doc.querySelector('#run').click();await drain();
     assert.equal(doc.querySelector('#completion-count').textContent,'0 / 63 cases processed');
@@ -562,7 +583,7 @@ async function connectDemo(p,device='quest-3'){
   assert.equal(doc.activeElement.id,'run');
 }
 
-test('demo smoke connects a chosen device and completes CPU/GPU without native mutations or URL changes',async()=>{
+test('demo smoke connects a chosen device and completes GPU only without native mutations or URL changes',async()=>{
   const p=await page('bench',null,{devices:[],apk_ready:false});
   try{
     const doc=p.window.document,url=p.window.location.href;
@@ -581,12 +602,12 @@ test('demo smoke connects a chosen device and completes CPU/GPU without native m
     assert.equal(doc.querySelector('#headset-stage').hidden,false);
     assert.equal(doc.querySelector('#headset-stage').dataset.mode,'chip');
     await p.tick(3000);
-    assert.match(doc.querySelector('#chip-kicker').textContent,/CPU · simulated/);
-    assert.equal(doc.querySelector('#chip-percent').textContent,'25%');
+    assert.match(doc.querySelector('#chip-kicker').textContent,/GPU · simulated/);
+    assert.equal(doc.querySelector('#chip-percent').textContent,'24%');
     assert.equal(doc.querySelector('#chip-timer').textContent,'00:03');
     await p.tick(3000);
     assert.match(doc.querySelector('#chip-kicker').textContent,/GPU · simulated/);
-    assert.equal(doc.querySelector('#chip-percent').textContent,'50%');
+    assert.equal(doc.querySelector('#chip-percent').textContent,'49%');
     await p.tick(6000);
     assert.equal(doc.querySelector('#chip-percent').textContent,'100%');
     assert.equal(doc.querySelector('#chip-timer').textContent,'00:12');
@@ -598,9 +619,9 @@ test('demo smoke connects a chosen device and completes CPU/GPU without native m
     assert.equal(doc.querySelector('#results-link').hidden,true);
     assert.doesNotMatch(doc.querySelector('#chip-dashboard').textContent,/NATIVE|on device|validated/);
     assert.doesNotMatch(doc.querySelector('#results').textContent,/Native CPU|Native GPU|Measured on your device|passed correctness checks/);
-    const cpu=doc.querySelector('#result-processors button');cpu.focus();cpu.click();
-    assert.equal(doc.activeElement.textContent,'CPU');
-    assert.match(doc.querySelector('#run-context').textContent,/Simulated CPU/);
+    const gpu=doc.querySelector('#result-processors button');gpu.focus();gpu.click();
+    assert.equal(doc.activeElement.textContent,'GPU');
+    assert.match(doc.querySelector('#run-context').textContent,/Simulated GPU/);
     assert.equal(doc.querySelectorAll('.layer-latency')[0].textContent.includes('ms'),true);
     assert.equal(p.calls.filter(c=>c.body).length,0);
     assert.equal(p.calls.some(c=>c.path.includes('demo-')),false);
@@ -612,7 +633,7 @@ test('demo smoke connects a chosen device and completes CPU/GPU without native m
     assert.equal(doc.querySelector('#headset-stage').hidden,false);
     assert.equal(doc.querySelector('#device-demo-badge').hidden,true);
     assert.equal(doc.querySelector('#device-name').textContent,'Connect XR device');
-    assert.equal(doc.querySelector('#run-label').textContent,'Run');
+    assert.equal(doc.querySelector('#run-label').textContent,'Run GPU');
     assert.equal(p.timers.intervals.size,2);
   }finally{p.close();}
 });
@@ -692,7 +713,7 @@ test('service outage during a demo never falls through to native actions',async(
     const doc=p.window.document;await connectDemo(p);doc.querySelector('#run').click();
     p.faults.status=true;await p.tick(3000);
     assert.equal(doc.querySelector('#run').disabled,false);
-    assert.equal(doc.querySelector('#chip-percent').textContent,'25%');
+    assert.equal(doc.querySelector('#chip-percent').textContent,'24%');
     doc.querySelector('#run').click();assert.equal(doc.querySelector('#chip-kicker').textContent,'Demo stopped');
     doc.querySelector('#demo-exit').click();
     assert.equal(doc.querySelector('#run').disabled,true);
@@ -702,28 +723,25 @@ test('service outage during a demo never falls through to native actions',async(
 });
 
 
-test('homepage recovery and native CPU/GPU diagnostics never require Stats navigation',async()=>{
+test('homepage recovery and native GPU diagnostics never require Stats navigation',async()=>{
   const p=await page('bench',null,{}, {syncSession:false});
   try{
     const doc=p.window.document;
     const links=[...doc.querySelectorAll('a[href^="/stats"]')];
     assert.equal(links.length,1);assert.equal(links[0].id,'stats-link');
     doc.querySelector('#run').click();await drain();
-    const parent=p.state.benchmark_sessions[0],cpu=parent.phases[0],gpu=parent.phases[1];
+    const parent=p.state.benchmark_sessions[0],gpu=parent.phases[0];
+    assert.equal(parent.phases.length,1);assert.equal(parent.processor,'gpu');
     assert.equal(doc.querySelector('#headset-stage').dataset.mode,'chip');
     assert.equal(doc.querySelector('#chip-dashboard').parentElement.id,'headset-stage');
     assert.equal(doc.querySelector('#back-headset').hidden,true);
-    cpu.run.progress={sequence:1,current_case:catalog.cases[0].id,completed_cases:7,current_samples:4};
+    gpu.run.progress={sequence:1,current_case:catalog.cases[0].id,completed_cases:7,current_samples:4};
     await p.tick(1000);
-    assert.match(doc.querySelector('#chip-count').textContent,/7 \/ 126/);
+    assert.match(doc.querySelector('#chip-count').textContent,/7 \/ 63/);
     assert.match(doc.querySelector('#chip-samples').textContent,/4 samples/);
-    assert.equal(doc.querySelector('.chip-region[data-processor="cpu"]').dataset.active,'true');
-    cpu.run.status=cpu.status='complete';cpu.run.progress.completed_cases=63;
-    parent.current_phase=1;gpu.status='running';gpu.run={run_id:gpu.run_id,status:'running',configuration:{...gpu.configuration,backend:'executorch_vulkan'},progress:{sequence:1,current_case:catalog.cases[3].id,completed_cases:3,current_samples:12}};
-    p.state.jobs=[gpu.run,cpu.run];await p.tick(1000);
-    assert.match(doc.querySelector('#chip-count').textContent,/66 \/ 126/);
     assert.equal(doc.querySelector('.chip-region[data-processor="gpu"]').dataset.active,'true');
-    assert.equal(doc.querySelector('.chip-region[data-processor="cpu"]').dataset.active,'false');
+    assert.equal(doc.querySelector('.chip-region[data-processor="cpu"]').hidden,true);
+    assert.equal(doc.querySelector('#advanced-cpu').hidden,true);
     parent.status='disconnected';await p.tick(1000);assert.equal(doc.querySelector('#chip-kicker').textContent,'Waiting for device');
     parent.status='complete';parent.finished_at=Date.now()/1000;gpu.run.status=gpu.status='complete';gpu.run.progress.completed_cases=63;
     await p.tick(1000);assert.equal(doc.querySelector('#chip-percent').textContent,'100%');
@@ -747,7 +765,7 @@ test('setup retry stays inline and a rendering failure leaves the real run contr
     assert.equal(doc.querySelector('#notice').hidden,true);
     doc.querySelector('#run').click();await drain();
     assert.equal(doc.querySelector('#headset-stage').dataset.graphics,'fallback');
-    assert.equal(doc.querySelector('#chip-dashboard').hidden,false);assert.match(doc.querySelector('#chip-kicker').textContent,/CPU/);
+    assert.equal(doc.querySelector('#chip-dashboard').hidden,false);assert.match(doc.querySelector('#chip-kicker').textContent,/GPU/);
     assert.equal(doc.querySelector('#run-label').textContent,'Stop');
     doc.querySelector('#run').click();await drain();
     assert.equal(p.calls.filter(c=>c.path.endsWith('/stop')).length,1);
@@ -813,5 +831,68 @@ test('phone Run brings the reveal into view once; progress polling never steals 
     await p.tick(6000);await p.tick(6000);assert.equal(p.scrolls.length,1);
     doc.querySelector('#back-headset').click();assert.match(p.scrolls[1].target,/hero/);
     assert.equal(p.window.location.pathname,'/');
+  }finally{p.close();}
+});
+
+test('Advanced CPU is explicit, restricted, and never changes the primary GPU default',async()=>{
+  for(const hosted of [false,true]){
+    const identity={device_name:'Synthetic CPU-only device',chip_name:'Synthetic processor',cpu_eligible:true,gpu_presence:'absent',gpu_presence_source:'https://fixture.invalid/spec'};
+    const p=await page('bench',null,{devices:[{serial:'fixture',model:'Synthetic device',state:'device',supported:true,identity}]},{hosted});
+    try{
+      const doc=p.window.document;
+      assert.equal(doc.querySelector('#advanced-cpu').hidden,false);
+      assert.equal(doc.querySelector('#advanced-cpu').open,false);
+      assert.equal(p.calls.filter(c=>c.body).length,0);
+      doc.querySelector('#advanced-cpu').open=true;doc.querySelector('#run-cpu').click();await drain();
+      assert.equal(p.calls.find(c=>c.path==='/api/benchmark-sessions'&&c.body).body.processor,'cpu');
+      assert.equal(doc.querySelector('#run-cpu').disabled,true);
+      assert.match(doc.querySelector('#chip-kicker').textContent,/CPU/);
+      assert.equal(doc.querySelector('.chip-region[data-processor="gpu"]').hidden,true);
+      assert.equal(doc.querySelector('#run-label').textContent,'Stop');
+      doc.querySelector('#run').click();await drain();
+      p.state.jobs[0].status='canceled';await p.tick();
+      doc.querySelector('#run').click();await drain();
+      assert.equal(p.calls.filter(c=>c.path==='/api/benchmark-sessions'&&c.body).at(-1).body.processor,'gpu');
+      assert.equal(p.window.location.pathname,'/');
+    }finally{p.close();}
+  }
+  const p=await page('bench');try{
+    assert.equal(p.window.document.querySelector('#advanced-cpu').hidden,true);
+    p.window.document.querySelector('#run-cpu').click();await drain();
+    assert.equal(p.calls.filter(c=>c.body).length,0);
+    assert.match(p.window.document.querySelector('#notice-message').textContent,/confirmed to have no GPU/);
+  }finally{p.close();}
+});
+
+test('test-only GPU-absent demo exercises Advanced CPU without API or storage writes',async()=>{
+  const deviceCatalog=structuredClone(devicesCatalog);
+  Object.assign(deviceCatalog.chips.find(c=>c.id==='xr2-gen2'),{gpu_presence:'absent',gpu_presence_source:'https://fixture.invalid/spec'});
+  const p=await page('bench',null,{devices:[],apk_ready:false},{deviceCatalog});
+  try{
+    const doc=p.window.document,url=p.window.location.href;await connectDemo(p,'quest-3');
+    assert.equal(doc.querySelector('#advanced-cpu').hidden,false);
+    doc.querySelector('#advanced-cpu').open=true;doc.querySelector('#run-cpu').click();
+    assert.match(doc.querySelector('#chip-kicker').textContent,/CPU · simulated/);
+    assert.equal(doc.querySelector('#run-cpu').disabled,true);
+    await p.tick(12000);assert.equal(doc.querySelector('#chip-percent').textContent,'100%');
+    assert.equal(doc.querySelectorAll('#chip-case-evidence li').length,63);
+    assert.equal(doc.querySelector('.chip-region[data-processor="gpu"]').hidden,true);
+    assert.equal(p.calls.filter(c=>c.body).length,0);assert.equal(p.window.location.href,url);
+    assert.equal(p.window.localStorage.length,0);assert.equal(p.window.sessionStorage.length,0);
+    doc.querySelector('#demo-exit').click();assert.equal(doc.querySelector('#advanced-cpu').hidden,true);
+  }finally{p.close();}
+});
+
+test('unsupported GPU reason and Retry stay inline with no CPU phase or navigation',async()=>{
+  const p=await page('bench',null,{}, {syncSession:false});
+  try{
+    const doc=p.window.document;doc.querySelector('#run').click();await drain();
+    const s=p.state.benchmark_sessions[0];s.status='complete';s.partial=true;s.phases[0].status='unsupported';
+    s.phases[0].reason='Vulkan driver unavailable';delete s.phases[0].run;p.state.jobs=[];
+    await p.tick();assert.equal(doc.querySelector('#notice').hidden,false);
+    assert.match(doc.querySelector('#notice-message').textContent,/Vulkan driver unavailable/);
+    assert.equal(doc.querySelector('#advanced-cpu').hidden,true);
+    doc.querySelector('#retry-status').click();await drain();
+    assert.equal(p.calls.filter(c=>c.body).length,1);assert.equal(p.window.location.pathname,'/');
   }finally{p.close();}
 });

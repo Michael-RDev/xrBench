@@ -58,33 +58,27 @@ changes invalidate the bundle revision. Every preset runs all cases in the resol
 
 ## Start the website
 
-From the repository root, with Docker running:
+For the local developer dashboard, run the all-in-one launcher from the repository
+root. See [engine startup](../engine/README.md) for options and the manual alternative.
 
 ```sh
 uv sync --extra export --group dev
-uv run --extra export --group dev python -m src
+uv run --extra export --group dev python main.py
 ```
 
-The launcher creates an ignored, mode-0600 `engine/.env` containing a random
-database password, starts PostgreSQL 17, applies migrations, and opens
-[the local dashboard](http://localhost:8765). PostgreSQL listens only on
-127.0.0.1:5432; the controller listens only on 127.0.0.1:8765. Change
-`XRGPU_DB_PORT` in the generated `.env` if port 5432 is already occupied. The
-controller stays on the host because it needs access to the USB ADB connection.
-
-Startup first checks that Docker's engine responds within 10 seconds. PostgreSQL
-startup then has a 120-second limit (including any image download), with a
-60-second container-health wait. If Docker Desktop is still starting, wait for
-its engine to be running and retry. If it stays stuck, restart Docker Desktop;
-this interrupts other containers, so finish any active container work first.
-Container startup errors include Docker's diagnostic output. A port conflict
-can be resolved by selecting a free `XRGPU_DB_PORT` in `engine/.env`. Ctrl-C
-during startup cancels cleanly without a Python traceback.
+The launcher starts Docker Desktop if needed on macOS/Windows, starts PostgreSQL,
+applies pending migrations, then opens [the local dashboard](http://localhost:8766).
+Docker must be installed first; Linux requires its Docker engine running.
+PostgreSQL listens only on 127.0.0.1:5432; the controller listens only on
+127.0.0.1:8766. A fresh local setup receives generated credentials in `engine/.env`;
+existing passwords and database reports are preserved. Set `XRGPU_DB_PORT` to change
+the database port. The controller stays on the host because it needs access to USB ADB.
 
 Use `--no-open` to suppress browser launch, `--port` to change the website port,
 and `--adb /path/to/adb` to select platform-tools. To use an existing database,
-set `XRGPU_DATABASE_URL` and pass `--no-docker`. The database role needs permission
-to create the `xrgpu_benchmarks` schema and its tables. Database configuration is
+set `XRGPU_DATABASE_URL`; `main.py` skips Docker and applies SQL to that database.
+SQL setup needs permission to create the `xrgpu_benchmarks` schema and its tables.
+Database configuration is
 never sent to the browser or packaged into the app.
 
 ADB discovery uses the explicit `--adb` override first, then PATH, the repository's
@@ -97,7 +91,7 @@ Only existing files in these known locations are selected; no downloads or PATH
 changes are needed. Custom installation locations can be selected explicitly:
 
 ```powershell
-uv run python -m src --adb "C:\Program Files\Meta Quest Developer Hub\resources\bin\adb.exe"
+uv run python main.py --adb "C:\Program Files\Meta Quest Developer Hub\resources\bin\adb.exe"
 ```
 
 An invalid explicit override reports an error without falling back to another
@@ -281,7 +275,8 @@ idempotency; conflicting retries cannot overwrite existing data. The Compose
 project stays `xrgpu-benchmarks`, preserving its
 `xrgpu-benchmarks_benchmark-postgres` volume across this relocation. Compose lives
 in `engine/compose.yaml`; `.env` and `.state/debug.keystore` must be retained. Versioned
-migrations also run against existing volumes. No volume reset is required.
+pending migrations are applied by `main.py` to existing volumes too. Rerunning the
+SQL files preserves collected rows and skips applied versions. No volume reset is required.
 
 Reports contain device capabilities, OS/runtime/suite identity, synthetic workload
 configuration, correctness evidence, timings, thermal/charging observations and

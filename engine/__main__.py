@@ -1,22 +1,24 @@
 import argparse
 import sys
-import time
 import webbrowser
 
 from engine.adb import ADB
 from engine.controller import Controller
+from engine.db import SchemaNotReady
 from engine.db.config import DatabaseStartupError, database
 from engine.paths import BUILD, STATE
 from engine.server import create_server
 
 
-def main():
-    parser=argparse.ArgumentParser(description='Start PostgreSQL and the local native-headset benchmark website.')
-    parser.add_argument("--port",type=int,default=8765)
+def main(*, default_port=8765, automatic=False):
+    description = ('Start Docker, PostgreSQL, pending SQL migrations, and the xrBench website.' if automatic
+                   else 'Start only the local benchmark server. Start PostgreSQL and apply SQL manually first (engine/README.md).')
+    parser=argparse.ArgumentParser(description=description)
+    parser.set_defaults(auto_setup=automatic)
+    parser.add_argument("--port",type=int,default=default_port)
     parser.add_argument("--adb")
-    parser.add_argument("--no-docker",action="store_true",help="Use an already-running PostgreSQL server")
+    parser.add_argument("--no-docker",action="store_true",help="Use an already-running database; still apply pending SQL" if automatic else argparse.SUPPRESS)
     parser.add_argument("--no-open",action="store_true")
-    parser.add_argument("--migrate-only",action="store_true")
     args=parser.parse_args()
     try:
         launch(args)
@@ -28,14 +30,18 @@ def main():
 
 
 def launch(args):
-    store=database(not args.no_docker)
-    print("Connecting to PostgreSQL and applying migrations…", flush=True)
-    for attempt in range(30):
-        try:store.migrate();break
-        except Exception:
-            if attempt==29:raise SystemExit("PostgreSQL unavailable or migration failed. Check local database configuration.")
-            time.sleep(1)
-    if args.migrate_only:print("Benchmark PostgreSQL migrations applied.");return
+    if args.auto_setup:
+        from engine.startup import prepare_database
+        store = prepare_database(start_container=not args.no_docker)
+    else:
+        store=database()
+    print("Checking the existing PostgreSQL schema…", flush=True)
+    try:
+        store.health()
+    except SchemaNotReady:
+        raise DatabaseStartupError("Database schema is not ready. Apply the SQL files in engine/db/migrations/ in order, then start the server again. See engine/README.md.") from None
+    except Exception:
+        raise DatabaseStartupError("PostgreSQL is unavailable. Start the database container manually and check engine/.env or XRGPU_DATABASE_URL, then retry. See engine/README.md.") from None
     controller=Controller(ADB(args.adb),store,STATE/"runs",BUILD)
     server=create_server(controller,args.port)
     url=f"http://localhost:{server.server_port}"

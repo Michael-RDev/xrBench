@@ -1,3 +1,4 @@
+import {gpuEligibility} from '../processor-policy.mjs';
 export const terminal = new Set(['complete', 'failed', 'canceled']);
 export const runPattern = /^run-[0-9a-f]{32}$/;
 export class EvidenceError extends Error {}
@@ -43,7 +44,8 @@ export function identify(device, catalog) {
     identity_source: conflict ? 'conflicting' : chip ? 'reported' : chipId ? 'catalog' : 'unknown',
     execution_location: conflict ? 'unknown' : component?.location || entry?.chips[0]?.location || 'unknown',
     visual_model: conflict ? 'schematic' : entry?.visual || 'schematic', validation_status: 'unvalidated',
-    identity_evidence: Object.fromEntries(['model', 'product', 'device', 'soc_model', 'soc_manufacturer'].map(k => [k, device[k] || null]))};
+    identity_evidence: Object.fromEntries(['model', 'product', 'device', 'soc_model', 'soc_manufacturer'].map(k => [k, device[k] || null])),
+    ...gpuEligibility(known, device, conflict)};
 }
 export function distribution(values) {
   if (!values.length || values.some(v => typeof v !== 'number' || !Number.isFinite(v) || v < 0)) return null;

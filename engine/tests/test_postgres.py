@@ -4,24 +4,79 @@ import uuid
 
 import pytest
 
-from engine.db import Store
+from engine.db import SchemaNotReady, Store, migration_files
 from engine.reports import summarize
 
 
 @pytest.fixture
-def store():
+def uninitialized_store():
     psycopg=pytest.importorskip("psycopg")
     if os.environ.get("XRGPU_TEST_POSTGRES")!="1":pytest.skip("Set XRGPU_TEST_POSTGRES=1 for the local PostgreSQL integration tests")
     from engine.db.config import database
     from psycopg import sql
     from psycopg.conninfo import conninfo_to_dict,make_conninfo
-    base=database(False);name="xrgpu_test_"+uuid.uuid4().hex
+    base=database();name="xrgpu_test_"+uuid.uuid4().hex
     with psycopg.connect(base.dsn,autocommit=True) as connection:connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
     params=conninfo_to_dict(base.dsn);params["dbname"]=name
     result=Store(make_conninfo(**params))
-    try:result.migrate();yield result
+    try:yield result
     finally:
         with psycopg.connect(base.dsn,autocommit=True) as connection:connection.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
+
+
+@pytest.fixture
+def store(uninitialized_store):
+    uninitialized_store.migrate()
+    return uninitialized_store
+
+
+def test_operator_sql_files_initialize_upgrade_and_repeat_without_losing_reports(uninitialized_store, report):
+    store = uninitialized_store
+    with pytest.raises(SchemaNotReady):
+        store.health()
+    first, second = migration_files()
+    with store.connect() as db:
+        db.autocommit = True
+        db.execute(first.read_text())
+    with pytest.raises(SchemaNotReady):
+        store.health()
+    receipt = store.put(summarize(report))
+    with store.connect() as db:
+        db.autocommit = True
+        db.execute(second.read_text())
+    assert store.health()
+    with store.connect() as db:
+        db.autocommit = True
+        for path in migration_files():
+            db.execute(path.read_text())
+    assert store.result(report['run_id'])['receipt'] == receipt
+    assert store.health()
+
+
+def test_automatic_setup_initializes_and_reopens_without_losing_reports(uninitialized_store, report, monkeypatch):
+    from engine.startup import prepare_database
+    monkeypatch.setenv('XRGPU_DATABASE_URL', uninitialized_store.dsn)
+    store = prepare_database()
+    receipt = store.put(summarize(report))
+    reopened = prepare_database()
+    assert reopened.health()
+    assert reopened.result(report['run_id'])['receipt'] == receipt
+
+
+def test_failed_manual_sql_does_not_record_a_version_or_leave_partial_tables(uninitialized_store):
+    from psycopg.errors import DuplicateTable
+    store = uninitialized_store
+    with store.connect() as db:
+        db.execute('CREATE SCHEMA xrgpu_benchmarks')
+        db.execute('CREATE TABLE xrgpu_benchmarks.benchmark_results (existing integer)')
+    with pytest.raises(DuplicateTable):
+        with store.connect() as db:
+            db.autocommit = True
+            db.execute(migration_files()[0].read_text())
+    with store.connect() as db:
+        assert db.execute("SELECT to_regclass('xrgpu_benchmarks.benchmark_runs')").fetchone()[0] is None
+        assert db.execute("SELECT to_regclass('xrgpu_benchmarks.schema_migrations')").fetchone()[0] is None
+        assert db.execute("SELECT to_regclass('xrgpu_benchmarks.benchmark_results')").fetchone()[0]
 
 
 def test_migrations_persistence_and_conflict(store,report):

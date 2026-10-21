@@ -18,7 +18,7 @@ def test_session_origin_host_and_path_boundaries():
         return urllib.request.urlopen(urllib.request.Request(url+path,headers=headers or {},data=body),timeout=3)
     try:
         with request("/api/session") as r:assert json.load(r)["token"]=="test-session"
-        with request("/") as r:assert b"Run all tests" in r.read()
+        with request("/") as r:assert b"Run GPU benchmark" in r.read()
         for path, marker in (
             ("/stats/", b"stats for nerds"),
             ("/stats", b"stats for nerds"),
@@ -29,6 +29,7 @@ def test_session_origin_host_and_path_boundaries():
             ("/bench/features.mjs", b"ENABLE_SMOKE_DEMO"),
             ("/bench/ascii-headset.mjs", b"mountHeadset"),
             ("/bench/smoke-demo.mjs", b"createDemoController"),
+            ("/bench/processor-policy.mjs", b"gpuEligibility"),
             ("/stats/app.js", b"/shared/session.mjs"),
             ("/stats/style.css", b".compare-metadata"),
             ("/stats/view-model.mjs", b"casesForReport"),
@@ -36,7 +37,7 @@ def test_session_origin_host_and_path_boundaries():
         ):
             with request(path) as r:
                 assert marker in r.read()
-        with request("/",{"Sec-Fetch-Site":"cross-site"}) as r:assert b"Run all tests" in r.read()
+        with request("/",{"Sec-Fetch-Site":"cross-site"}) as r:assert b"Run GPU benchmark" in r.read()
         with pytest.raises(urllib.error.HTTPError) as error:request("/api/session",{"Sec-Fetch-Site":"cross-site"})
         assert error.value.code==403
         for headers in ({},{"X-XRGPU-Session":"wrong"},{"X-XRGPU-Session":"test-session","Origin":"https://evil.example"},
@@ -152,8 +153,11 @@ def test_http_benchmark_session_idempotency_read_stop_and_catalog(tmp_path):
         first=request('/api/benchmark-sessions',payload)
         path='/api/benchmark-sessions/'+first['session_id']
         assert request('/api/benchmark-sessions',payload)['session_id']==first['session_id']
-        assert request(path)['phases'][0]['backend']=='executorch_cpu'
-        assert request(path)['phases'][1]['backend']=='executorch_vulkan'
+        assert request(path)['phases'][0]['backend']=='executorch_vulkan'
+        assert len(request(path)['phases'])==1
+        with pytest.raises(urllib.error.HTTPError) as error:
+            request('/api/benchmark-sessions', dict(payload, processor='cpu'))
+        assert error.value.code==400
         assert 'serial' not in request(path)
         assert request('/api/device-catalog')['version']==1
         assert request('/api/status')['benchmark_sessions'][0]['session_id']==first['session_id']

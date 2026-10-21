@@ -20,9 +20,11 @@ export function nativeReport(config, status = 'complete') {
       status: 'passed', correctness: {passed: true}, samples: [{execution_ms: 1, model_ms: .8, ...(config.backend.includes('cpu') ? {} : {gpu_ms: .5})}]}))};
 }
 export class MemoryStore {
-  constructor() {this.items = []; this.reports = new Map();}
+  constructor() {this.items = []; this.reports = new Map(); this.outbox = new Map();}
   async sessions() {return structuredClone(this.items);}
   async save(s) {const i = this.items.findIndex(v => v.session_id === s.session_id); if (i < 0) this.items.push(structuredClone(s)); else this.items[i] = structuredClone(s);}
   async saveReport(id, r) {this.reports.set(id, structuredClone(r));}
   async report(id) {return structuredClone(this.reports.get(id));}
+  async deliveries() {return structuredClone([...this.outbox.values()]);}
+  async saveDelivery(row) {this.outbox.set(row.run_id, structuredClone(row));}
 }

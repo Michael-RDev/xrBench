@@ -1,4 +1,6 @@
-const PHASE_MS = 6000;
+import {gpuEligibility, CPU_RESTRICTION} from './processor-policy.mjs';
+
+const PHASE_MS = 12000;
 const REVISION = 'simulated-ui-v1';
 
 export function demoIdentity(catalog, device) {
@@ -11,7 +13,8 @@ export function demoIdentity(catalog, device) {
     : execution === 'planned_metal' ? 'Real Apple Metal support is planned.'
     : 'A general compute runner is unavailable for this device.';
   return {device_id: device.id, device_name: device.name, chip_name: chips.map(chip => chip.name).join(' / '),
-    execution_location: primary?.location || 'headset', identity_source: 'simulated', support};
+    execution_location: primary?.location || 'headset', identity_source: 'simulated', support,
+    ...gpuEligibility(chips.length === 1 ? chips[0] : null)};
 }
 
 function sampleRows(cases, count, processor) {
@@ -42,7 +45,7 @@ export function createDemoController({onChange = () => {}, now = () => Date.now(
     const session = state.session;
     if (!session || session.status !== 'running') return;
     const elapsed = Math.max(0, now() - session.created_at * 1000);
-    session.current_phase = Math.min(1, Math.floor(elapsed / PHASE_MS));
+    session.current_phase = Math.min(session.phases.length - 1, Math.floor(elapsed / PHASE_MS));
     for (const [index, phase] of session.phases.entries()) {
       const count = Math.min(phase.cases.length, Math.floor(Math.max(0, elapsed - index * PHASE_MS) / PHASE_MS * phase.cases.length));
       phase.status = count === phase.cases.length ? 'complete' : index === session.current_phase ? 'running' : 'pending';
@@ -56,8 +59,8 @@ export function createDemoController({onChange = () => {}, now = () => Date.now(
       phase.run = {...report, progress_received_at: now()};
     }
     state.selected = session.phases[session.current_phase].run_id;
-    if (elapsed >= PHASE_MS * 2) {
-      session.status = 'complete'; session.finished_at = session.created_at + PHASE_MS * 2 / 1000; clear();
+    if (elapsed >= PHASE_MS * session.phases.length) {
+      session.status = 'complete'; session.finished_at = session.created_at + PHASE_MS * session.phases.length / 1000; clear();
     }
     emit();
   }
@@ -76,13 +79,15 @@ export function createDemoController({onChange = () => {}, now = () => Date.now(
       state.identity = demoIdentity(deviceCatalog, device); state.stage = 'connecting'; emit();
       connectionTimer = timers.setTimeout(() => { connectionTimer = null; state.stage = 'connected'; emit(); }, 500);
     },
-    start() {
+    start(processor = 'gpu') {
       if (disposed || !this.ready || state.stage !== 'connected' || state.session?.status === 'running') return;
+      if (!['gpu', 'cpu'].includes(processor)) throw Error('Processor must be gpu or cpu');
+      if (processor === 'cpu' && !state.identity.cpu_eligible) throw Error(CPU_RESTRICTION);
       clear();
       const cases = structuredClone(caseCatalog.cases);
       state.session = {session_id: 'demo-session', simulated: true, status: 'running', created_at: now() / 1000,
-        current_phase: 0, identity: state.identity,
-        phases: ['cpu', 'gpu'].map(processor => ({processor, run_id: `demo-${processor}`, status: 'pending', cases,
+        current_phase: 0, identity: state.identity, processor,
+        phases: [processor].map(processor => ({processor, run_id: `demo-${processor}`, status: 'pending', cases,
           configuration: {mode: 'isolated', preset: 'smoke', backend: `demo_${processor}`, cases: cases.map(c => c.id)}}))};
       state.reports = Object.fromEntries(state.session.phases.map(phase => [phase.run_id, {
         run_id: phase.run_id, simulated: true, status: 'pending', configuration: phase.configuration,

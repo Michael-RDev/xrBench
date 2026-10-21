@@ -1,7 +1,16 @@
-CREATE TABLE schema_migrations (
+-- Run manually with psql -v ON_ERROR_STOP=1 -f /migrations/001_initial.sql.
+-- Each file owns its transaction and version record; rerunning it preserves data.
+BEGIN;
+SELECT pg_advisory_xact_lock(871624931);
+CREATE SCHEMA IF NOT EXISTS xrgpu_benchmarks;
+SET LOCAL search_path TO xrgpu_benchmarks;
+CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+DO $migration$
+BEGIN
+IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version = 1) THEN
 CREATE TABLE benchmark_runs (
     run_id TEXT PRIMARY KEY,
     schema_version INTEGER NOT NULL CHECK (schema_version = 2),
@@ -37,3 +46,8 @@ CREATE INDEX benchmark_runs_recent ON benchmark_runs (received_at DESC);
 CREATE INDEX benchmark_runs_model ON benchmark_runs ((device->>'model'));
 CREATE INDEX benchmark_runs_suite ON benchmark_runs (suite_revision);
 CREATE INDEX benchmark_results_operation ON benchmark_results (operation);
+INSERT INTO schema_migrations(version) VALUES (1);
+END IF;
+END;
+$migration$;
+COMMIT;

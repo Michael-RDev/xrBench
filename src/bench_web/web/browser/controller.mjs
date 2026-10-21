@@ -1,13 +1,14 @@
 import {terminal, identify, validateManifest, validateReport, validateProgress, summarize, sha256, EvidenceError} from './evidence.mjs';
 import {acquireDeviceLock} from './store.mjs';
 import {MissingFile, connectionMessage} from './transport.mjs';
+import {CPU_RESTRICTION} from '../processor-policy.mjs';
 
 const uuid = prefix => prefix + crypto.randomUUID().replaceAll('-', '');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const now = () => Date.now() / 1000;
 export class BrowserController {
-  constructor({transport, store, manifestUrl, fetcher = globalThis.fetch.bind(globalThis), lock = acquireDeviceLock, sleep = delay}) {
-    Object.assign(this, {transport, store, manifestUrl, fetcher, lock, sleep});
+  constructor({transport, store, manifestUrl, delivery = null, fetcher = globalThis.fetch.bind(globalThis), lock = acquireDeviceLock, sleep = delay}) {
+    Object.assign(this, {transport, store, manifestUrl, delivery, fetcher, lock, sleep});
     this.sessions = []; this.workers = new Map(); this.starting = false; this.disposed = false; this.deviceRows = new Map();
   }
   async init() {
@@ -22,7 +23,13 @@ export class BrowserController {
   }
   async save(s) {s.updated_at = now(); await this.store.save(s);}
   active() {return this.sessions.find(s => !terminal.has(s.status));}
-  async start(serial, requestId) {
+  async start(serial, requestId, processor = 'gpu') {
+    if (!['gpu', 'cpu'].includes(processor)) throw Error('Processor must be gpu or cpu');
+    const explicitProcessor = arguments.length >= 3;
+    const checkRequest = s => {
+      if (requestId && s.request_id === requestId && (s.processor ? s.processor !== processor : explicitProcessor))
+        throw Error('This request belongs to a different processor plan.');
+    };
     if (this.starting) throw Error('A connection request is already open.');
     this.starting = true;
     try {
@@ -31,22 +38,23 @@ export class BrowserController {
       const device = await chosen; await this.init();
       if (!device.serial) throw Error('This headset has no stable USB identity and cannot be safely recovered.');
       const existing = this.active();
-      if (existing) {if (existing.serial !== device.serial) throw Error('Reconnect the headset with the unfinished run first.'); await this.resume(existing, device); return this.view(existing);}
+      if (existing) {checkRequest(existing); if (existing.serial !== device.serial) throw Error('Reconnect the headset with the unfinished run first.'); await this.resume(existing, device); return this.view(existing);}
       const release = await this.lock(device.serial);
       try {
         // Re-read under the cross-tab lock so two tabs cannot start competing sessions.
         this.sessions = await this.store.sessions();
         const duplicate = this.sessions.find(s => s.request_id === requestId || (s.serial === device.serial && !terminal.has(s.status)));
         if (duplicate) {
+          checkRequest(duplicate);
           if (duplicate.serial !== device.serial) throw Error('This request belongs to a different headset. Choose a new run.');
           if (terminal.has(duplicate.status)) release(); else this.work(duplicate, device, release);
           return this.view(duplicate);
         }
         const s = {session_id: uuid('bench-'), request_id: requestId || uuid('request-'), serial: device.serial,
           connection_id: (await sha256(new TextEncoder().encode(device.serial))).slice(0, 24),
-          status: 'starting', created_at: now(), current_phase: 0, cancel_requested: false,
+          status: 'starting', created_at: now(), current_phase: 0, cancel_requested: false, processor,
           message: 'Connecting · put on the headset and allow USB debugging…', manifest: structuredClone(this.manifest),
-          phases: ['cpu', 'gpu'].map(processor => ({processor, backend: this.manifest.configurations[processor].backend,
+          phases: [processor].map(processor => ({processor, backend: this.manifest.configurations[processor].backend,
             configuration: structuredClone(this.manifest.configurations[processor]), run_id: uuid('run-'), status: 'pending'}))};
         await this.save(s); this.sessions.push(s); this.work(s, device, release); return this.view(s);
       } catch (e) {release(); throw e;}
@@ -59,6 +67,7 @@ export class BrowserController {
   }
   async snapshot() {
     await this.init();
+    await this.syncDelivery();
     const devices = await this.transport.discover();
     if (!this.workers.size && !this.starting) this.sessions = await this.store.sessions();
     const active = this.active();
@@ -70,7 +79,26 @@ export class BrowserController {
     return {devices: devices.map(d => this.deviceRows.get(d.serial) || {serial: d.serial, model: d.name || 'USB headset', state: 'device', supported: true}),
       jobs: sessions.flatMap(s => s.phases.flatMap(p => p.run ? [p.run] : [])), benchmark_sessions: sessions,
       catalog: this.manifest.catalog, suite_revision: this.manifest.suite_revision, apk_ready: true,
-      browser_usb: true, usb_supported: this.transport.supported, error: null};
+      browser_usb: true, usb_supported: this.transport.supported, error: null, report_delivery: this.delivery?.snapshot()};
+  }
+  async syncDelivery() {
+    if (!this.delivery || this.disposed) return;
+    try {
+      await this.delivery.init();
+      let issue = '';
+      // Recover the gap between saving native evidence and queuing it, including after a refresh.
+      for (const s of this.sessions) for (const phase of s.phases) {
+        if (!phase.run?.report_available || this.delivery.has(phase.run_id)) continue;
+        try {
+          const stored = await this.store.report(phase.run_id);
+          if (!terminal.has(stored?.native?.status)) continue;
+          validateReport(stored.native, phase.configuration, s.manifest.catalog);
+          await this.delivery.queue(stored.native);
+        } catch (error) {issue = error.message;}
+      }
+      this.delivery.error = issue;
+      this.delivery.kick();
+    } catch (error) {this.delivery.error = error.message;}
   }
   async resume(s, device) {
     if (this.workers.has(s.session_id)) return;
@@ -101,6 +129,7 @@ export class BrowserController {
       await this.transport.connect(device, signal);
       const properties = await this.transport.properties(signal), identity = identify(properties, s.manifest.device_catalog);
       if (properties.sdk < 29 || !properties.abi.split(',').includes('arm64-v8a')) throw new EvidenceError('This runner requires Android 10+ and arm64-v8a.');
+      if (s.processor === 'cpu' && !identity.cpu_eligible) throw new EvidenceError(CPU_RESTRICTION);
       this.deviceRows.set(s.serial, {...properties, identity, serial: s.serial, connection_id: s.connection_id, state: 'device', supported: true});
       s.message = 'Connected · preparing headset runner…';
       if (!s.capabilities_checked) s.status = 'starting';
@@ -115,6 +144,7 @@ export class BrowserController {
         s.capabilities = await this.transport.probe(s.manifest, signal);
         s.identity = identify({...properties, ...Object.fromEntries(Object.entries(s.capabilities).filter(([, v]) => v !== '' && v != null && v !== 'unknown'))}, s.manifest.device_catalog);
         s.capabilities_checked = true;
+        this.deviceRows.set(s.serial, {...this.deviceRows.get(s.serial), identity: s.identity});
         for (const phase of s.phases) phase.configuration.execution_target = s.identity.execution_location;
         await this.save(s);
         await this.sleep(250);
@@ -151,9 +181,12 @@ export class BrowserController {
     if (s.cancel_requested && !phase.attempted) {phase.status = 'canceled'; await this.finish(s, 'canceled'); return;}
     if (!phase.attempted) {
       if (s.manifest.apk_sha256 !== this.manifest.apk_sha256) throw new EvidenceError('Website runner changed between phases. Start a new session to use this release.');
+      if (s.processor === 'cpu' && !identify({...s.identity.identity_evidence, ...s.capabilities}, s.manifest.device_catalog).cpu_eligible)
+        throw new EvidenceError(CPU_RESTRICTION);
       const support = s.capabilities.backends[phase.backend];
       if (support?.compatible !== true) {
         phase.status = 'unsupported'; phase.reason = support?.reason || 'Native backend unavailable';
+        if (s.processor) s.error = phase.reason;
         await this.advance(s); return;
       }
       phase.configuration.run_id = phase.run_id;
@@ -200,6 +233,7 @@ export class BrowserController {
     phase.status = native.status;
     if (terminal.has(native.status)) {
       await this.save(s);
+      await this.syncDelivery();
       if (s.cancel_requested || native.status === 'canceled') {
         if (!s.cancel_requested && /activity lifecycle/.test(native.error || '')) {
           s.error = 'The headset paused the benchmark. Keep it awake with the benchmark app open, then press Run again. Partial results are saved.';
@@ -251,5 +285,5 @@ export class BrowserController {
     for (const p of s.phases) {const stored = await this.store.report(p.run_id); if (stored) reports.push(stored.native);}
     return {schema_version: 1, session: this.view(s), reports};
   }
-  dispose() {this.disposed = true; for (const w of this.workers.values()) w.abort.abort(); void this.transport.close();}
+  dispose() {this.disposed = true; this.delivery?.dispose(); for (const w of this.workers.values()) w.abort.abort(); void this.transport.close();}
 }
