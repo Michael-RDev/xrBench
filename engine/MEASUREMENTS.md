@@ -5,6 +5,12 @@ Reports remain schema version 2. Optional `diagnostics`, `calibration` and per-r
 Missing historical fields are unavailable, not zero. The JSON database storage
 requires no migration.
 
+New public browser releases use the Standard preset for all 63 GPU cases: 20
+warmups and 100 measured samples per successful case, with automatic calibration
+and dispatch tracing. Warmups and validation are outside the measured samples.
+Saved Smoke sessions preserve their original 5 warmups and 20 samples. The local
+development application keeps its existing preset controls.
+
 ## Timing boundaries
 
 The Android `TimingLedger` partitions one monotonic `System.nanoTime()` clock into
@@ -36,6 +42,10 @@ Correctness failures, interrupted samples, thermal/charging transitions and XR
 focus loss remain attached to the affected rows. Invalid observations cannot
 produce efficiency estimates or performance deltas. XR baseline/load comparisons
 remain separate from isolated-workload estimates.
+Browser and Python summaries also check recorded sample conditions for transitions
+even when a row-level flag is absent. Invalid rows retain raw samples but have no
+accepted timing distributions; a GPU span without a verified timestamp domain is
+unavailable.
 
 ## Calibration
 
@@ -119,7 +129,7 @@ with transfers subtracted from its timing. Cross-backend comparisons are withhel
 `executorch_cpu` uses backend-specific exports and native portable ExecuTorch kernels.
 Its `execution_ms` includes JNI input staging, CPU forward and output copy;
 `model_ms` covers CPU forward. `cpu_resident` uses the FP32 scalar baseline or ARM
-NEON candidate in `kernels/cpu/matmul.h`, on one calling thread with persistent
+NEON candidate in xrGPU’s `kernels/benchmark/cpu/matmul.h`, on one calling thread with persistent
 buffers. Its invocation includes JNI and CPU matmul; output copying for correctness
 is outside measured samples. CPU samples record kernel source/name, variant and
 thread policy. GPU timestamps, dispatch counts and GPU efficiency are unavailable,
@@ -140,4 +150,4 @@ The development suite records fixture seeds. Paired arms must use the same seed;
 cross-run comparison also checks it. Intentional `incorrect` and `slower` controls
 are tagged and cannot receive an improvement label. The qualification assessor
 requires complete matching evidence and reports validation separately from speedup.
-See `kernels/PORTABILITY.md` for scope and hardware gates.
+See `docs/PORTABILITY.md` for scope and hardware gates.

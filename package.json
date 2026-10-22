@@ -3,8 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --experimental-vm-modules --test src/stats_for_nerds/tests/test_web.mjs src/bench_web/tests/*.mjs",
-    "build": "node scripts/build-web.mjs"
+    "test": "node --experimental-vm-modules --test src/stats_for_nerds/tests/test_web.mjs src/bench_web/tests/*.mjs server/tests/*.mjs",
+    "build": "node scripts/build-web.mjs",
+    "build:receiver": "node scripts/build-receiver.mjs"
   },
   "devDependencies": {
     "esbuild": "0.28.2",

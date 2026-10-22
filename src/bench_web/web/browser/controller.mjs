@@ -1,6 +1,6 @@
 import {terminal, identify, validateManifest, validateReport, validateProgress, summarize, sha256, EvidenceError} from './evidence.mjs';
 import {acquireDeviceLock} from './store.mjs';
-import {MissingFile, connectionMessage} from './transport.mjs';
+import {MissingFile, connectionError, connectionMessage} from './transport.mjs';
 import {CPU_RESTRICTION} from '../processor-policy.mjs';
 
 const uuid = prefix => prefix + crypto.randomUUID().replaceAll('-', '');
@@ -10,6 +10,7 @@ export class BrowserController {
   constructor({transport, store, manifestUrl, delivery = null, fetcher = globalThis.fetch.bind(globalThis), lock = acquireDeviceLock, sleep = delay}) {
     Object.assign(this, {transport, store, manifestUrl, delivery, fetcher, lock, sleep});
     this.sessions = []; this.workers = new Map(); this.starting = false; this.disposed = false; this.deviceRows = new Map();
+    this.resuming = new Map(); this.lastDevices = null;
   }
   async init() {
     if (this.manifest) return;
@@ -58,25 +59,40 @@ export class BrowserController {
             configuration: structuredClone(this.manifest.configurations[processor]), run_id: uuid('run-'), status: 'pending'}))};
         await this.save(s); this.sessions.push(s); this.work(s, device, release); return this.view(s);
       } catch (e) {release(); throw e;}
-    } catch (e) {throw Error(connectionMessage(e), {cause: e});}
+    } catch (e) {throw connectionError(e);}
     finally {this.starting = false;}
   }
   view(s) {
     const result = structuredClone(s); delete result.serial; delete result.request_id; delete result.manifest;
+    if (result.status === 'disconnected') result.message = connectionMessage({message: result.message});
     return result;
   }
   async snapshot() {
     await this.init();
     await this.syncDelivery();
     const devices = await this.transport.discover();
-    if (!this.workers.size && !this.starting) this.sessions = await this.store.sessions();
+    const present = new Set(devices.map(d => d.serial));
+    for (const serial of this.deviceRows.keys()) if (!present.has(serial)) this.deviceRows.delete(serial);
+    const reconnected = new Set([...present].filter(serial => this.lastDevices && !this.lastDevices.has(serial)));
+    this.lastDevices = present;
+    if (!this.workers.size && !this.resuming.size && !this.starting) {
+      const saved = await this.store.sessions();
+      if (!this.workers.size && !this.resuming.size && !this.starting) this.sessions = saved;
+    }
     const active = this.active();
     if (active && !this.workers.has(active.session_id) && !this.starting && !this.disposed) {
       const device = devices.find(d => d.serial === active.serial);
-      if (device) {try {await this.resume(active, device);} catch (e) {active.message = connectionMessage(e);}}
+      // Older saved sessions have only a message. Honor their busy error too.
+      const code = active.connection_error?.code || (active.status === 'disconnected' ? connectionError({message: active.message}).code : null);
+      const manual = ['usb_busy', 'permission_denied', 'approval_timeout', 'not_selected'].includes(code);
+      if (device && (!manual || reconnected.has(active.serial))) {
+        try {await this.resume(active, device);} catch (e) {active.message = connectionMessage(e); active.connection_state = 'blocked';}
+      }
     }
-    const sessions = [...this.sessions].reverse().map(s => this.view(s));
-    return {devices: devices.map(d => this.deviceRows.get(d.serial) || {serial: d.serial, model: d.name || 'USB headset', state: 'device', supported: true}),
+    const sessions = [...this.sessions].sort((a, b) => b.created_at - a.created_at).map(s => this.view(s));
+    return {devices: devices.map(d => ({serial: d.serial, model: d.name || 'USB headset', state: 'usb', supported: false,
+        ...this.deviceRows.get(d.serial), connection_state: active?.serial === d.serial ? active.connection_state || (active.status === 'disconnected' ? 'blocked' : 'connecting') : 'detected',
+        connection_message: active?.serial === d.serial ? (active.status === 'disconnected' ? connectionMessage({message: active.message}) : active.message) : null})),
       jobs: sessions.flatMap(s => s.phases.flatMap(p => p.run ? [p.run] : [])), benchmark_sessions: sessions,
       catalog: this.manifest.catalog, suite_revision: this.manifest.suite_revision, apk_ready: true,
       browser_usb: true, usb_supported: this.transport.supported, error: null, report_delivery: this.delivery?.snapshot()};
@@ -100,22 +116,39 @@ export class BrowserController {
       this.delivery.kick();
     } catch (error) {this.delivery.error = error.message;}
   }
+  async retry(id) {
+    const s = this.sessions.find(s => s.session_id === id);
+    if (!s || terminal.has(s.status)) throw Error('No unfinished connection to retry. Press Run to start a benchmark.');
+    if (this.starting || this.workers.has(id) || this.resuming.has(id)) return this.view(s);
+    this.starting = true;
+    try {
+      // Keep the chooser in the Retry click's user activation, just like Run.
+      const device = await this.transport.choose(s.serial);
+      if (device.serial !== s.serial) throw Error('Reconnect the headset with the unfinished run first.');
+      await this.resume(s, device); return this.view(s);
+    } catch (error) {throw connectionError(error);}
+    finally {this.starting = false;}
+  }
   async resume(s, device) {
     if (this.workers.has(s.session_id)) return;
-    const release = await this.lock(s.serial);
-    try {
-      // Another tab may have advanced or finished since this tab's last snapshot.
-      const latest = (await this.store.sessions()).find(value => value.session_id === s.session_id);
-      if (!latest) throw Error('Session not found');
-      Object.assign(s, latest);
-      if (terminal.has(s.status)) release(); else this.work(s, device, release);
-    } catch (e) {release(); throw e;}
+    if (this.resuming.has(s.session_id)) return this.resuming.get(s.session_id);
+    const task = Promise.resolve().then(async () => {
+      const release = await this.lock(s.serial);
+      try {
+        // Another tab may have advanced or finished since this tab's last snapshot.
+        const latest = (await this.store.sessions()).find(value => value.session_id === s.session_id);
+        if (!latest) throw Error('Session not found');
+        Object.assign(s, latest);
+        if (terminal.has(s.status) || this.disposed) release(); else this.work(s, device, release);
+      } catch (e) {release(); throw e;}
+    }).finally(() => this.resuming.delete(s.session_id));
+    this.resuming.set(s.session_id, task); return task;
   }
   work(s, device, release) {
     const worker = {abort: new AbortController(), release, task: null};
     this.workers.set(s.session_id, worker);
     worker.task = this.run(s, device, worker).finally(async () => {
-      await this.transport.close(); release(); this.workers.delete(s.session_id);
+      try {await this.transport.close();} finally {release(); this.workers.delete(s.session_id);}
     });
     // Persistence failure must be visible, and must never produce an unhandled task.
     worker.task.catch(e => {s.status = 'disconnected'; s.message = e.message;});
@@ -124,8 +157,9 @@ export class BrowserController {
     const signal = worker.abort.signal;
     try {
       if (s.cancel_requested && !s.phases.some(p => p.attempted)) {await this.finish(s, 'canceled'); return;}
-      // Keep the recovery reason visible while reconnecting the same session.
-      if (s.status !== 'disconnected') s.message = 'Connecting · put on the headset and allow USB debugging…';
+      s.connection_state = 'connecting'; delete s.connection_error;
+      s.message = 'Connecting · put on the headset and allow USB debugging…';
+      await this.save(s);
       await this.transport.connect(device, signal);
       const properties = await this.transport.properties(signal), identity = identify(properties, s.manifest.device_catalog);
       if (properties.sdk < 29 || !properties.abi.split(',').includes('arm64-v8a')) throw new EvidenceError('This runner requires Android 10+ and arm64-v8a.');
@@ -150,6 +184,7 @@ export class BrowserController {
         await this.sleep(250);
       }
       while (!this.disposed && !terminal.has(s.status)) {
+        s.connection_state = 'ready';
         await this.tick(s, signal);
         if (!terminal.has(s.status)) await this.sleep(1000);
       }
@@ -163,7 +198,12 @@ export class BrowserController {
         }
         s.error = e.message; await this.finish(s, 'failed');
       }
-      else {console.warn('xrBench device connection interrupted', e); s.status = 'disconnected'; s.message = connectionMessage(e); await this.save(s);}
+      else {
+        const error = connectionError(e);
+        console.warn('xrBench device connection interrupted', error);
+        s.status = 'disconnected'; s.connection_state = 'blocked';
+        s.connection_error = {code: error.code, message: error.message}; s.message = error.message; await this.save(s);
+      }
     }
   }
   async finish(s, status) {
@@ -200,6 +240,7 @@ export class BrowserController {
         await this.finish(s, 'canceled'); return;
       }
       await this.transport.launch(s.manifest, phase.configuration, signal);
+      s.started_at ||= now();
       phase.run.status = phase.status = 'running'; s.message = `${phase.processor.toUpperCase()} · native execution`;
       await this.save(s); return;
     }
@@ -273,7 +314,7 @@ export class BrowserController {
       // Abort downloads/authentication/preparation, but keep an attempted native run recoverable.
       if (!s.phases.some(p => p.attempted)) {
         this.workers.get(id)?.abort.abort(new DOMException('Benchmark stopped', 'AbortError'));
-        if (!this.workers.has(id)) await this.finish(s, 'canceled');
+        await this.finish(s, 'canceled');
       }
       return this.view(s);
     } finally {release?.();}

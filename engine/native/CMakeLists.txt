@@ -4,6 +4,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 get_filename_component(ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 set(EXECUTORCH_ROOT "${ROOT}/artifacts/deps/executorch")
+if(NOT XRGPU_KERNEL_PACKAGE_ROOT OR NOT EXISTS "${XRGPU_KERNEL_PACKAGE_ROOT}/manifest.json" OR NOT XRGPU_CPU_KERNEL_SOURCE)
+  message(FATAL_ERROR "Use python -m engine.build to fetch and verify the pinned xrGPU kernel package")
+endif()
 if(NOT PYTHON_EXECUTABLE)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   set(PYTHON_EXECUTABLE "${Python3_EXECUTABLE}" CACHE FILEPATH "Export environment")
@@ -19,7 +22,7 @@ set(EXECUTORCH_BUILD_EXECUTOR_RUNNER OFF CACHE BOOL "" FORCE)
 set(EXECUTORCH_VULKAN_SHADER_COMPILE_NTHREADS 4 CACHE STRING "" FORCE)
 add_subdirectory("${EXECUTORCH_ROOT}" et)
 target_include_directories(vulkan_backend PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-file(READ "${ROOT}/kernels/matmul/config.json" CANDIDATE_CONFIG)
+file(READ "${XRGPU_KERNEL_PACKAGE_ROOT}/matmul/config.json" CANDIDATE_CONFIG)
 string(JSON CANDIDATE_TILE_M GET "${CANDIDATE_CONFIG}" tile_m)
 target_compile_definitions(vulkan_backend PRIVATE XRGPU_CANDIDATE_TILE_M=${CANDIDATE_TILE_M})
 set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -37,14 +40,14 @@ add_custom_command(OUTPUT "${CANDIDATE_OUTPUT}/spv.cpp"
   DEPENDS ${CANDIDATE_SOURCES} "${EXECUTORCH_ROOT}/backends/vulkan/runtime/gen_vulkan_spv.py")
 foreach(shader compute memory dispatch)
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc"
-    COMMAND "${GLSLC_PATH}" --target-env=vulkan1.1 -mfmt=c "${CMAKE_CURRENT_SOURCE_DIR}/calibration/${shader}.comp" -o "${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc"
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/calibration/${shader}.comp")
+    COMMAND "${GLSLC_PATH}" --target-env=vulkan1.1 -mfmt=c "${XRGPU_KERNEL_PACKAGE_ROOT}/calibration/${shader}.comp" -o "${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc"
+    DEPENDS "${XRGPU_KERNEL_PACKAGE_ROOT}/calibration/${shader}.comp")
 endforeach()
 foreach(tile 1 2)
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/resident_matmul_tile${tile}.inc" "${CMAKE_CURRENT_BINARY_DIR}/resident_matmul_tile${tile}.spv"
-    COMMAND "${GLSLC_PATH}" --target-env=vulkan1.1 -O -DTILE_ROWS=${tile} -mfmt=c "${ROOT}/kernels/resident/matmul.comp" -o "${CMAKE_CURRENT_BINARY_DIR}/resident_matmul_tile${tile}.inc"
-    COMMAND "${GLSLC_PATH}" --target-env=vulkan1.1 -O -DTILE_ROWS=${tile} "${ROOT}/kernels/resident/matmul.comp" -o "${CMAKE_CURRENT_BINARY_DIR}/resident_matmul_tile${tile}.spv"
-    DEPENDS "${ROOT}/kernels/resident/matmul.comp")
+    COMMAND "${GLSLC_PATH}" --target-env=vulkan1.1 -O -DTILE_ROWS=${tile} -mfmt=c "${XRGPU_KERNEL_PACKAGE_ROOT}/resident/matmul.comp" -o "${CMAKE_CURRENT_BINARY_DIR}/resident_matmul_tile${tile}.inc"
+    COMMAND "${GLSLC_PATH}" --target-env=vulkan1.1 -O -DTILE_ROWS=${tile} "${XRGPU_KERNEL_PACKAGE_ROOT}/resident/matmul.comp" -o "${CMAKE_CURRENT_BINARY_DIR}/resident_matmul_tile${tile}.spv"
+    DEPENDS "${XRGPU_KERNEL_PACKAGE_ROOT}/resident/matmul.comp")
 endforeach()
 add_library(xrgpu_benchmarks SHARED runner.cpp capabilities.cpp scene.cpp calibration.cpp resident.cpp "${CMAKE_CURRENT_BINARY_DIR}/resident_matmul_tile1.inc" "${CMAKE_CURRENT_BINARY_DIR}/resident_matmul_tile2.inc" "${CANDIDATE_OUTPUT}/spv.cpp"
   "${CMAKE_CURRENT_BINARY_DIR}/compute.inc" "${CMAKE_CURRENT_BINARY_DIR}/memory.inc" "${CMAKE_CURRENT_BINARY_DIR}/dispatch.inc"
@@ -62,9 +65,9 @@ target_link_options(xrgpu_benchmarks PRIVATE "-Wl,-u,ANativeActivity_onCreate" "
 
 # A separate shared object ensures CPU execution can load without Vulkan/OpenXR.
 add_library(xrbench_cpu SHARED cpu.cpp)
-target_include_directories(xrbench_cpu PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${ROOT}"
+target_include_directories(xrbench_cpu PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${XRGPU_KERNEL_PACKAGE_ROOT}"
   "${EXECUTORCH_ROOT}/third-party/json/single_include")
 target_compile_definitions(xrbench_cpu PRIVATE XRGPU_ET_REVISION="${XRGPU_ET_REVISION}"
-  XRGPU_RUNNER_REVISION="${XRGPU_RUNNER_REVISION}")
+  XRGPU_RUNNER_REVISION="${XRGPU_RUNNER_REVISION}" XRGPU_CPU_KERNEL_SOURCE="${XRGPU_CPU_KERNEL_SOURCE}")
 target_link_libraries(xrbench_cpu PRIVATE executorch extension_module extension_tensor portable_ops_lib log)
 target_link_options(xrbench_cpu PRIVATE "-Wl,-z,max-page-size=16384" "-Wl,-Bsymbolic")

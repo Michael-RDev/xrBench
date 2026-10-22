@@ -2,5 +2,12 @@
   "executorch": {"url": "https://github.com/pytorch/executorch.git", "ref": "v1.4.1", "commit": "e4d02f41f7909e8ed5bf4a14ffc520d733453d9f"},
   "openxr": {"url": "https://github.com/KhronosGroup/OpenXR-SDK.git", "ref": "release-1.1.49", "commit": "977f6675bc0057d5a54ed290cb5c71c699b1c0ab"},
   "shaderc": {"url": "https://github.com/google/shaderc.git", "ref": "v2026.1", "commit": "301b4ede53d59b68bf55f95bb26412d9233c8187"},
-  "android": {"compile_sdk": 35, "min_sdk": 29, "ndk": "28.2.13676358", "agp": "8.9.2", "gradle": "8.11.1"}
+  "android": {"compile_sdk": 35, "min_sdk": 29, "ndk": "28.2.13676358", "agp": "8.9.2", "gradle": "8.11.1"},
+  "xrgpu": {
+    "url": "https://github.com/Michael-RDev/xrGPU.git",
+    "commit": "dc167a0ebc3c610b269604167c19996729c6bbdf",
+    "package_id": "xrgpu.benchmark-kernels.v1",
+    "package_path": "kernels/benchmark",
+    "content_sha256": "a81df3ef206848e3966ae1926866847202fa2bba20832e9a4e16a8341182676b"
+  }
 }

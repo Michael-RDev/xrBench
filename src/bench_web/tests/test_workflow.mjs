@@ -26,7 +26,7 @@ const drain=async()=>{for(let i=0;i<10;i++)await new Promise(resolve=>setImmedia
 async function page(kind,report=null,stateOverrides={},options={}){
   const pretty=kind==='bench',fixtureOptions=options;
   const html=await readFile(new URL(`src/${pretty?'bench_web':'stats_for_nerds'}/web/index.html`,root),'utf8');
-  const dom=new JSDOM(html,{url:'http://localhost:8765/'+(pretty?'':'stats/')+(report?'?run='+id:''),runScripts:'outside-only'});
+  const dom=new JSDOM(html,{url:'http://localhost:8765/'+(pretty?'':'stats/')+(options.search??(report?'?run='+id:'')),runScripts:'outside-only'});
   const window=dom.window,calls=[],intervals=new Map(),timeouts=new Map(),faults={start:false,status:false,...options.faults},downloads=[],scrolls=[];
   if(options.hosted)window.document.documentElement.dataset.transport='webusb';
   let time=Date.now(),timerId=0,nativeStarts=0,frameTime=0;const frames=new Map();window.Date.now=()=>time;window.structuredClone=structuredClone;
@@ -86,6 +86,11 @@ async function page(kind,report=null,stateOverrides={},options={}){
       return s;
     },
     exportSession:async()=>({reports:[report]}),dispose:()=>{},
+    retry:async sessionId=>{
+      calls.push({path:'/api/benchmark-sessions/'+sessionId+'/retry'});
+      const s=state.benchmark_sessions.find(s=>s.session_id===sessionId);s.connection_state='connecting';s.message='Connecting';
+      for(const d of state.devices)d.connection_state='connecting';return structuredClone(s);
+    },
   };
   window.setInterval=callback=>{const key=++timerId;intervals.set(key,callback);return key;};
   window.clearInterval=key=>intervals.delete(key);
@@ -117,14 +122,16 @@ async function page(kind,report=null,stateOverrides={},options={}){
     }};
 }
 
-test('hosted Run ignores local APK setup and Stop remains available while downloading',async()=>{
+test('hosted Run ignores local APK setup and Cancel remains available while downloading',async()=>{
   const p=await page('bench',null,{devices:[],apk_ready:false},{hosted:true,preparing:true});
   try{
     const doc=p.window.document;
     assert.equal(doc.getElementById('stats-link').hidden,true);
     doc.getElementById('run').click();doc.getElementById('run').click();await drain();
     assert.equal(p.calls.filter(c=>c.path==='/api/benchmark-sessions'&&c.body).length,1);
-    assert.equal(doc.getElementById('run-label').textContent,'Stop');
+    assert.equal(doc.getElementById('run-label').textContent,'Cancel');
+    assert.equal(doc.getElementById('chip-dashboard').hidden,true);
+    assert.equal(doc.getElementById('results').hidden,true);
     assert.equal(doc.getElementById('run').disabled,false);
     assert.match(doc.getElementById('run-status').textContent,/Downloading headset runner/);
     assert.equal(doc.getElementById('setup-help').hidden,true);
@@ -211,7 +218,7 @@ test('Run beneath the description starts the full suite once, preserves selectio
     p.state.jobs[0].status='canceled';await p.tick();
     assert.equal(doc.querySelector('#run-phase').textContent,'Run stopped');
     assert.equal(doc.querySelector('#run').disabled,false);
-    assert.equal(doc.querySelector('#run-label').textContent,'Run GPU again');
+    assert.equal(doc.querySelector('#run-label').textContent,'Run');
   }finally{p.close();}
 });
 
@@ -232,12 +239,14 @@ test('kernel experiment selects matmul, disables unattended runs, and submits th
   }finally{p.close();}
 });
 
-test('returned kernel evidence shows source-level dispatch detail and paired intervals',async()=>{
+for (const source of ['kernels/matmul/xrbench_matmul_scalar.glsl',
+  'https://github.com/Michael-RDev/xrGPU/blob/' + 'a'.repeat(40) + '/kernels/benchmark/matmul/xrbench_matmul_scalar.glsl'])
+test('returned kernel evidence shows source-level dispatch detail and paired intervals: ' + source,async()=>{
   const report={run_id:id,status:'complete',suite_revision:'fixture-suite',configuration:{cases:['matmul_odd'],preset:'smoke'},
     device:{model:'Quest fixture'},experiment:{kind:'candidate'},
     kernel_comparison:{note:'Exploratory',results:[{case:'matmul_odd',available:true,pairs:6,outcome:'improvement_observed',metrics:{execution_ms:{mean_improvement_percent:12,ci95_percent:[8,16],mean_p95_change_percent:-10}}}]},
     results:[{case:'matmul_odd',operation:'matmul',variant:'candidate',phase:'isolated',trial:1,arm:'comparison',status:'passed',samples:[{execution_ms:1}],
-      dispatch_summary:[{kernel_name:'xrbench_matmul_buffer_float',dispatch_id:1,local_size:[8,8,1],global_size:[5,4,1],complete:true,timing:{median:.2,p95:.3},shader:{source:'kernels/matmul/xrbench_matmul_scalar.glsl'}}]}]};
+      dispatch_summary:[{kernel_name:'xrbench_matmul_buffer_float',dispatch_id:1,local_size:[8,8,1],global_size:[5,4,1],complete:true,timing:{median:.2,p95:.3},shader:{source}}]}]};
   const p=await page('stats',report);
   try{
     const doc=p.window.document;
@@ -245,7 +254,7 @@ test('returned kernel evidence shows source-level dispatch detail and paired int
     assert.match(doc.querySelector('#kernel-results').textContent,/8.00% to 16.00%/);
     const detail=doc.querySelector('#case-matmul_odd');detail.open=true;detail.dispatchEvent(new p.window.Event('toggle'));await drain();
     assert.match(detail.textContent,/xrbench_matmul_buffer_float/);
-    assert.match(detail.textContent,/kernels\/matmul\/xrbench_matmul_scalar.glsl/);
+    assert.ok(detail.textContent.includes(source));
   }finally{p.close();}
 });
 
@@ -272,7 +281,7 @@ test('live layer evidence advances without another Run and preserves expanded gr
     report.status='complete';p.state.jobs[0].status='complete';p.state.jobs[0].report_revision='two';
     await p.tick();
     assert.equal(doc.querySelector('#run-phase').textContent,'Run complete');
-    assert.equal(doc.querySelector('#run-label').textContent,'Run GPU again');
+    assert.equal(doc.querySelector('#run-label').textContent,'Run');
     assert.equal(doc.querySelector('#results-link').getAttribute('href'),'#layer-results');
     doc.querySelector('#run').click();await drain();
     assert.equal(doc.querySelector('#completion-count').textContent,'0 / 63 cases processed');
@@ -408,7 +417,91 @@ test('device status remains accurate through connection changes',async()=>{
   }finally{p.close();}
 });
 
-test('a saved Quest report does not imply a currently connected headset',async()=>{
+test('homepage keeps completed runs in collapsed history and Back clears selection permanently',async()=>{
+  const report={run_id:id,status:'complete',suite_revision:'fixture-suite',configuration:{backend:'executorch_vulkan',cases:catalog.cases.map(c=>c.id)},results:[]};
+  const job={...report,report_available:true,created_at:1700000000};
+  const parent={session_id:benchId,status:'complete',current_phase:0,created_at:1700000000,identity:{device_name:'Quest 3'},
+    phases:[{processor:'gpu',run_id:id,run:job,status:'complete',configuration:job.configuration}]};
+  const p=await page('bench',report,{jobs:[job],benchmark_sessions:[parent]},{hosted:true,search:''});
+  try{
+    const doc=p.window.document;
+    assert.equal(doc.querySelector('#run-label').textContent,'Run');
+    assert.equal(doc.querySelector('#chip-dashboard').hidden,true);assert.equal(doc.querySelector('#results').hidden,true);
+    assert.equal(doc.querySelector('#previous-runs').hidden,false);assert.equal(doc.querySelector('#previous-runs').open,false);
+    assert.equal(p.window.location.search,'');assert.equal(p.calls.filter(c=>c.path.endsWith('/report')).length,0);
+    doc.querySelector('#previous-runs').open=true;doc.querySelector('#previous-runs-list button').click();await drain();
+    assert.equal(doc.querySelector('#results').hidden,false);assert.equal(doc.querySelector('#chip-dashboard').hidden,false);
+    assert.equal(new URLSearchParams(p.window.location.search).get('session'),benchId);
+    doc.querySelector('#back-headset').click();await p.tick();await p.tick();
+    assert.equal(p.window.location.search,'');assert.equal(doc.querySelector('#results').hidden,true);
+    assert.equal(doc.querySelector('#chip-dashboard').hidden,true);assert.equal(doc.querySelector('#run-label').textContent,'Run');
+    assert.equal(doc.querySelectorAll('#previous-runs-list button').length,1);
+    doc.querySelector('#previous-runs-list button').click();await drain();
+    assert.equal(doc.querySelector('#results').hidden,false);
+  }finally{p.close();}
+});
+
+test('a busy connection offers Retry and Cancel without showing benchmark progress',async()=>{
+  const parent={session_id:benchId,status:'disconnected',connection_state:'blocked',message:'The USB interface is in use. Close other headset tools, then select Retry connection.',
+    current_phase:0,created_at:1700000000,phases:[{processor:'gpu',run_id:id,status:'pending',configuration:{backend:'executorch_vulkan',cases:catalog.cases.map(c=>c.id)}}]};
+  const p=await page('bench',null,{benchmark_sessions:[parent],devices:[{serial:'fixture',model:'Quest 3',state:'usb',supported:false,connection_state:'blocked',connection_message:parent.message}]},{hosted:true});
+  try{
+    const doc=p.window.document;
+    assert.equal(doc.querySelector('#run-label').textContent,'Retry connection');
+    assert.equal(doc.querySelector('#connection-cancel').hidden,false);
+    assert.equal(doc.querySelector('#device-connection').textContent,'Connection blocked');
+    assert.match(doc.querySelector('#device-help').textContent,/Close other headset tools/);
+    assert.equal(doc.querySelector('#chip-dashboard').hidden,true);assert.equal(doc.querySelector('#chip-details').hidden,true);
+    assert.equal(doc.querySelector('#results').hidden,true);
+    await p.tick(60000);assert.equal(p.calls.filter(c=>c.path.endsWith('/retry')).length,0);
+    doc.querySelector('#run').click();doc.querySelector('#run').click();await drain();
+    assert.equal(p.calls.filter(c=>c.path.endsWith('/retry')).length,1);
+    assert.equal(p.calls.filter(c=>c.path==='/api/benchmark-sessions'&&c.body).length,0);
+    assert.equal(doc.querySelector('#device-connection').textContent,'Connecting');
+    assert.equal(doc.querySelector('#run-label').textContent,'Cancel');
+    doc.querySelector('#run').click();await drain();
+    assert.equal(p.calls.filter(c=>c.path.endsWith('/stop')).length,1);
+  }finally{p.close();}
+});
+
+test('uncertain launch hides benchmark progress until native evidence arrives',async()=>{
+  const job={run_id:id,status:'launching',configuration:{backend:'executorch_vulkan',cases:catalog.cases.map(c=>c.id)}};
+  const parent={session_id:benchId,status:'running',current_phase:0,phases:[{processor:'gpu',run_id:id,attempted:true,status:'launching',run:job}]};
+  const p=await page('bench',null,{jobs:[job],benchmark_sessions:[parent]},{hosted:true,syncSession:false});
+  try{
+    const doc=p.window.document;
+    assert.equal(doc.querySelector('#chip-dashboard').hidden,true);assert.equal(doc.querySelector('#results').hidden,true);
+    assert.equal(doc.querySelector('#run-label').textContent,'Stop');
+    job.status='running';await p.tick();
+    assert.equal(doc.querySelector('#chip-dashboard').hidden,false);assert.equal(doc.querySelector('#results').hidden,false);
+  }finally{p.close();}
+});
+
+test('a canceled connection does not claim that benchmark results exist',async()=>{
+  const parent={session_id:benchId,status:'canceled',current_phase:0,phases:[{processor:'gpu',run_id:id,status:'pending'}]};
+  const p=await page('bench',null,{benchmark_sessions:[parent]},{hosted:true,search:'?session='+benchId});
+  try{
+    assert.equal(p.window.document.querySelector('#run-status').textContent,'Connection canceled. No benchmark was started.');
+    assert.equal(p.window.document.querySelector('#results').hidden,true);
+  }finally{p.close();}
+});
+
+test('USB detected is distinct from a verified ready connection',async()=>{
+  const device={serial:'fixture',model:'Quest 3',state:'usb',supported:false,connection_state:'detected'};
+  const p=await page('bench',null,{devices:[device]},{hosted:true});
+  try{
+    const doc=p.window.document;
+    assert.equal(doc.querySelector('#device-connection').textContent,'USB detected');
+    assert.equal(doc.querySelector('.device-panel').dataset.state,'detected');
+    assert.equal(doc.querySelector('#run').disabled,false);
+    assert.doesNotMatch(doc.querySelector('#device-chip').textContent,/XR2/);
+    device.connection_state='ready';device.identity={device_name:'Quest 3',chip_name:'Verified processor'};await p.tick();
+    assert.equal(doc.querySelector('#device-connection').textContent,'Ready');
+    assert.equal(doc.querySelector('#device-chip').textContent,'Verified processor');
+  }finally{p.close();}
+});
+
+test('an explicitly linked saved Quest report does not imply a currently connected headset',async()=>{
   const report={run_id:id,status:'complete',suite_revision:'fixture-suite',device:{model:'Quest 3'},
     configuration:{mode:'isolated',preset:'smoke',cases:catalog.cases.map(c=>c.id)},results:[]};
   const p=await page('bench',report,{devices:[]});
@@ -633,7 +726,7 @@ test('demo smoke connects a chosen device and completes GPU only without native 
     assert.equal(doc.querySelector('#headset-stage').hidden,false);
     assert.equal(doc.querySelector('#device-demo-badge').hidden,true);
     assert.equal(doc.querySelector('#device-name').textContent,'Connect XR device');
-    assert.equal(doc.querySelector('#run-label').textContent,'Run GPU');
+    assert.equal(doc.querySelector('#run-label').textContent,'Run');
     assert.equal(p.timers.intervals.size,2);
   }finally{p.close();}
 });
@@ -747,7 +840,8 @@ test('homepage recovery and native GPU diagnostics never require Stats navigatio
     await p.tick(1000);assert.equal(doc.querySelector('#chip-percent').textContent,'100%');
     assert.equal(doc.querySelector('#back-headset').hidden,false);
     doc.querySelector('#back-headset').click();await p.tick(1000);
-    assert.equal(doc.querySelector('#headset-stage').dataset.mode,'headset');assert.equal(doc.querySelector('#results').hidden,false);
+    assert.equal(doc.querySelector('#headset-stage').dataset.mode,'headset');assert.equal(doc.querySelector('#results').hidden,true);
+    assert.equal(p.window.location.search,'');
     assert.equal(doc.activeElement.id,'run');assert.equal(p.window.location.pathname,'/');
     assert.equal(doc.querySelector('#results-link').getAttribute('href'),'#layer-results');
     assert.equal(p.calls.filter(c=>c.path==='/api/benchmark-sessions'&&c.body).length,1);
@@ -837,7 +931,7 @@ test('phone Run brings the reveal into view once; progress polling never steals 
 test('Advanced CPU is explicit, restricted, and never changes the primary GPU default',async()=>{
   for(const hosted of [false,true]){
     const identity={device_name:'Synthetic CPU-only device',chip_name:'Synthetic processor',cpu_eligible:true,gpu_presence:'absent',gpu_presence_source:'https://fixture.invalid/spec'};
-    const p=await page('bench',null,{devices:[{serial:'fixture',model:'Synthetic device',state:'device',supported:true,identity}]},{hosted});
+    const p=await page('bench',null,{devices:[{serial:'fixture',model:'Synthetic device',state:'device',supported:true,identity,...(hosted?{connection_state:'detected'}:{})}]},{hosted});
     try{
       const doc=p.window.document;
       assert.equal(doc.querySelector('#advanced-cpu').hidden,false);

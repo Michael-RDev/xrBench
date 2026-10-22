@@ -54,7 +54,7 @@ def test_root_command_runs_everything_in_order_and_keeps_options(setup, monkeypa
         return SimpleNamespace(server_port=port, serve_forever=lambda: setup.events.append('serve'), server_close=lambda: None)
     monkeypatch.setattr(launcher, 'create_server', create_server)
     monkeypatch.setattr(launcher.webbrowser, 'open', lambda *a: pytest.fail('Browser opened'))
-    monkeypatch.setattr('sys.argv', ['main.py', '--no-open'])
+    monkeypatch.setattr('sys.argv', ['main.py', '--developer', '--no-open'])
     runpy.run_path(str(ROOT / 'main.py'), run_name='__main__')
     assert setup.events == ['docker info', 'docker compose', 'connect', 'SELECT 1', 'migrate', 'health', 'health', 'controller', 'serve']
     assert ports == [8766]
@@ -64,6 +64,16 @@ def test_root_command_runs_everything_in_order_and_keeps_options(setup, monkeypa
     assert kwargs['env']['XRGPU_DB_PASSWORD'] == 'private-test-password'
     assert kwargs['env']['XRGPU_DB_PORT'] == '5544'
     assert 'private-test-password' not in ' '.join(args)
+
+
+def test_default_launch_opens_public_site_without_developer_services(monkeypatch):
+    from engine import static_site
+    calls = []
+    monkeypatch.setattr(static_site, 'main', lambda: calls.append('browser'))
+    monkeypatch.setattr(startup, 'prepare_database', lambda **kw: pytest.fail('Developer setup started'))
+    monkeypatch.setattr('sys.argv', ['main.py', '--no-open'])
+    runpy.run_path(str(ROOT / 'main.py'), run_name='__main__')
+    assert calls == ['browser']
 
 
 def test_repeat_launch_reuses_credentials_and_volume(setup):
@@ -172,7 +182,7 @@ def test_setup_failures_stop_before_server_launch_and_hide_credentials(setup, mo
         clock = iter([0, 31])
         monkeypatch.setattr(startup.time, 'monotonic', lambda: next(clock))
     monkeypatch.setattr(launcher, 'Controller', lambda *a: pytest.fail('Server started after setup failure'))
-    monkeypatch.setattr('sys.argv', ['main.py', '--no-open'])
+    monkeypatch.setattr('sys.argv', ['main.py', '--developer', '--no-open'])
     with pytest.raises(SystemExit) as error:
         runpy.run_path(str(ROOT / 'main.py'), run_name='__main__')
     assert 'private-test-password' not in str(error.value)

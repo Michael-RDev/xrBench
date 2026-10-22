@@ -48,7 +48,7 @@ The Kernel experiment selector switches between ordinary stock benchmarking, an 
 noise control, and stock/candidate matmul. Experiments select matmul and require native
 isolated measurements with Smoke or Standard. Results show paired-block intervals;
 case details retain per-dispatch timing, workgroup sizes and shader source paths.
-Latency mode disables GPU timestamps. See [kernel development](../../kernels/README.md).
+Latency mode disables GPU timestamps. See [kernel development](../../docs/kernel-development.md).
 
 
 Device inspection and backend controls now support Android 10+ arm64 compute devices
@@ -56,7 +56,7 @@ without a product-name allowlist. The UI distinguishes capabilities from hardwar
 validation, exports profiles without USB serials, and records the execution target.
 Resident Vulkan selects matmul and excludes the Quest-only XR scene. The optional
 Development suite adds shapes, seeds, and synthetic model segments. See
-[kernels/PORTABILITY.md](../../kernels/PORTABILITY.md) for qualification and timing scopes.
+[docs/PORTABILITY.md](../../docs/PORTABILITY.md) for qualification and timing scopes.
 
 The additional `executorch_cpu` backend runs portable CPU exports, while
 `cpu_resident` exposes scalar/NEON matmul experiments. CPU controls disable GPU

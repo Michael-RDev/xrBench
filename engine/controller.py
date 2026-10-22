@@ -12,6 +12,7 @@ from engine import profiles
 from engine.watch import WatchRegistry
 from engine.benchmark_sessions import BenchmarkSessions, DeviceUnavailable
 from engine.devices import identify
+from engine.kernel_package import check_metadata
 from engine.reports import TERMINAL, canonical, digest, save, summarize, validate
 
 
@@ -74,11 +75,13 @@ class Controller(BenchmarkSessions):
         target=request.get('execution_target','unknown')
         if target not in TARGETS:raise ValueError('Unknown execution target')
         metadata=json.loads((self.build/"apk.json").read_text())
+        check_metadata(metadata)
         if metadata["suite_revision"]!=revision():raise ValueError("APK catalog is outdated. Rebuild the benchmark APK.")
         config=dict(mode=mode,preset=preset,operations=operations,calibration=policy,backend=backend.id,
             execution_target=target,workload_suite=profile,validation_control=request.get('validation_control','none'),
             cases=[c['id'] for c in cases],suite_revision=revision(),runtime_revision=metadata['runtime_revision'],
-            runner_revision=metadata['runner_revision'],apk_sha256=metadata['apk_sha256'])
+            runner_revision=metadata['runner_revision'],apk_sha256=metadata['apk_sha256'],
+            kernel_package=metadata['kernel_package'])
         experiment=request.get('experiment','none');profiling=request.get('profiling','trace')
         if experiment not in ('none','aa','candidate') or profiling not in ('trace','latency'):raise ValueError('Invalid kernel experiment setting')
         if experiment!='none':

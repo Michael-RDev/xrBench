@@ -15,7 +15,8 @@
       <p class="hero-eyebrow"><span aria-hidden="true"></span>Made for a more open reality</p>
       <h1 id="hero-title">Better XR. <br>Built <span>together.</span></h1><p class="lede">Help build an open source XR kernel community for standalone headsets and smart glasses. Together, we’re working toward faster, more efficient on-device compute for XR apps.</p>
       <div class="hero-actions">
-        <button id="run" class="primary" aria-label="Run GPU benchmark" disabled><span id="run-label">Run GPU</span><span id="run-icon" aria-hidden="true">▶</span></button>
+        <button id="run" class="primary" aria-label="Run GPU benchmark" disabled><span id="run-label">Run</span><span id="run-icon" aria-hidden="true">▶</span></button>
+        <button id="connection-cancel" class="text-action" type="button" hidden>Cancel</button>
         <button class="text-action" type="button" popovertarget="supported-devices">See supported devices</button>
         <span id="demo-trigger"></span>
         <button id="back-headset" class="text-action" type="button" hidden>Back to headset</button>
@@ -50,7 +51,7 @@
       <div class="device-topline"><span class="device-label">YOUR CONNECTION</span><span id="device-demo-badge" class="demo-tag" hidden>Simulated device</span></div>
       <div id="device-status" class="device-status" role="status" aria-live="polite">
         <select id="device-picker" aria-label="Device to benchmark" hidden></select><p id="device-name">Looking for your headset</p>
-        <p id="device-chip" class="device-chip"></p><p id="device-help">Checking the local benchmark service…</p>
+        <p id="device-connection" class="device-connection" hidden></p><p id="device-chip" class="device-chip"></p><p id="device-help">Checking the local benchmark service…</p>
         <button id="device-retry" class="text-action" type="button" hidden>Retry connection</button>
       </div>
     </section>
@@ -60,6 +61,7 @@
       </section>
       </div>
   </section>
+  <details id="previous-runs" class="previous-runs" hidden><summary>Previous runs</summary><ul id="previous-runs-list"></ul></details>
   <section id="results" class="results" aria-labelledby="results-title" hidden>
     <div class="results-heading"><div><p class="eyebrow">Measured on your device</p><h2 id="results-title">Every layer. On your silicon.</h2></div><a id="results-link" href="#layer-results">View case results ↓</a></div>
     <div id="result-processors" class="result-processors" aria-label="Processor results" hidden></div><button id="download-session" type="button" class="text-action" hidden>Download results JSON</button><div class="run-overview">

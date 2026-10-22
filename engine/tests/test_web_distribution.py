@@ -12,6 +12,7 @@ from engine.devices import identify
 from engine.paths import ROOT
 from engine.reports import save, summarize, validate
 from engine.web_distribution import publish
+from engine.kernel_package import provenance
 from layers import catalog, revision
 
 
@@ -24,7 +25,7 @@ def web_build(tmp_path):
     metadata = dict(package='org.xrgpu.benchmarks.web', apk_sha256=hashlib.sha256(data).hexdigest(),
                     suite_revision=revision(), runtime_revision='test-runtime', runner_revision='test-runner',
                     backends=['executorch_cpu', 'executorch_vulkan'], version_code=1,
-                    signing_certificate_sha256='b' * 64)
+                    signing_certificate_sha256='b' * 64, kernel_package=provenance())
     save(build / 'web-apk.json', metadata)
     return build
 
@@ -34,19 +35,23 @@ def test_distribution_uses_existing_configuration_and_matched_assets(tmp_path, w
     result = publish(output, web_build)
     assert (output / 'runner' / result['apk']).read_bytes() == b'synthetic-only-test-apk'
     assert result['catalog'] == catalog()
+    assert result['kernel_package'] == provenance()
     save(web_build / 'apk.json', json.loads((web_build / 'web-apk.json').read_text()))
     owner = type('Config', (), {'build': web_build})()
     for p, backend in [('cpu', 'executorch_cpu'), ('gpu', 'executorch_vulkan')]:
-        expected, _ = Controller.configuration(owner, dict(backend=backend, mode='isolated', preset='smoke', execution_target='unknown'))
+        expected, _ = Controller.configuration(owner, dict(backend=backend, mode='isolated', preset='standard', execution_target='unknown'))
         assert result['configurations'][p] == expected
+        assert expected['kernel_package'] == result['kernel_package']
         assert len(expected['cases']) == 63
+        assert expected['calibration'] == 'auto'
+        assert expected.get('profiling', 'trace') == 'trace'
 
 
-@pytest.mark.parametrize('kind', ['checksum', 'package', 'revision', 'signature'])
+@pytest.mark.parametrize('kind', ['checksum', 'package', 'revision', 'signature', 'kernels'])
 def test_distribution_rejects_unmatched_or_unsigned_runners(tmp_path, web_build, kind):
     path = web_build / 'web-apk.json'
     value = json.loads(path.read_text())
-    key = dict(checksum='apk_sha256', package='package', revision='suite_revision', signature='signing_certificate_sha256')[kind]
+    key = dict(checksum='apk_sha256', package='package', revision='suite_revision', signature='signing_certificate_sha256', kernels='kernel_package')[kind]
     value[key] = ''
     save(path, value)
     with pytest.raises(ValueError):
@@ -101,6 +106,36 @@ def test_browser_and_python_agree_on_standard_report_validation_and_summaries(re
         with pytest.raises(ValueError):
             validate(bad)
         assert not browser_contract(dict(report=bad, config=report['configuration'], catalog=cases))['valid']
+
+
+@pytest.mark.parametrize('change', ['valid', 'thermal', 'charging', 'correctness', 'timestamp_domain'])
+def test_optimization_summaries_preserve_samples_and_exclude_invalid_timings(report, change):
+    report['configuration'].update(backend=report['backend'], execution_target='headset', run_id=report['run_id'],
+                                   suite_revision=report['suite_revision'], runtime_revision=report['runtime_revision'], preset='standard')
+    row = report['results'][0]
+    row.update(thermal_start=0, charging_start=False)
+    row['samples'] = [dict(execution_ms=i + 1, gpu_span_ms=.5, thermal_status=0, charging=False,
+                           gpu_span_scope='single graph, common queue timestamp domain') for i in range(100)]
+    if change == 'thermal':
+        row['samples'][-1]['thermal_status'] = 1
+    if change == 'charging':
+        row['samples'][-1]['charging'] = True
+    if change == 'correctness':
+        row.update(status='failed', correctness={'passed': False})
+    if change == 'timestamp_domain':
+        row['samples'][-1].pop('gpu_span_scope')
+    expected = summarize(validate(copy.deepcopy(report)))['results'][0]
+    actual = browser_contract(dict(report=report, config=report['configuration'], catalog=dict(cases=[dict(id='linear_odd', operation='linear')])))
+    assert actual['valid']
+    assert actual['timing_valid'] == [expected['timing_valid']]
+    assert actual['timings'] == [expected['timings']]
+    assert expected['samples'] == row['samples']
+    if change in ('thermal', 'charging', 'correctness'):
+        assert not expected['timing_valid'] and all(value is None for value in expected['timings'].values())
+    else:
+        assert expected['timings']['execution_ms']['median'] == 50.5
+        assert expected['timings']['execution_ms']['p95'] == pytest.approx(95.05)
+        assert (expected['timings']['gpu_span_ms'] is None) == (change == 'timestamp_domain')
 
 
 @pytest.mark.parametrize('device', [dict(model='Quest_3'), dict(model='Quest 3S'),

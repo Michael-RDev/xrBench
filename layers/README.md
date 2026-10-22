@@ -16,8 +16,8 @@ preserve deterministic fixtures.
 parameters. `__init__.py` dispatches to the layer scripts and handles shared input
 generation, correctness checks, and source revisions. `_shared.py` only registers
 PyTorch buffers. The scripts define workloads exported to stock ExecuTorch/Vulkan;
-they are not custom native kernel implementations. Candidate GLSL implementations live separately in
-[`kernels/`](../kernels/README.md), which documents the headset-to-computer development loop.
+they are not custom native kernel implementations. Candidate GLSL implementations are fetched from xrGPU during builds. See the
+[kernel workflow](../docs/kernel-development.md) for the headset-to-computer development loop.
 
 | Layer folder / script | Cases |
 | --- | ---: |
@@ -56,14 +56,18 @@ Unity integration is separate.
 After editing a layer script, rerun the exporter and APK build below. Layer script
 changes invalidate the bundle revision. Every preset runs all cases in the resolved operation selection.
 
-## Start the website
+## Start the local development website (maintainers)
+
+Visitors open the hosted website, connect a headset and press Run. They do not
+perform the environment setup or builds below. The packaged browser preview uses
+`uv run python main.py` on port 8765, without a local database.
 
 For the local developer dashboard, run the all-in-one launcher from the repository
 root. See [engine startup](../engine/README.md) for options and the manual alternative.
 
 ```sh
 uv sync --extra export --group dev
-uv run --extra export --group dev python main.py
+uv run --extra export --group dev python main.py --developer
 ```
 
 The launcher starts Docker Desktop if needed on macOS/Windows, starts PostgreSQL,
@@ -76,7 +80,7 @@ the database port. The controller stays on the host because it needs access to U
 
 Use `--no-open` to suppress browser launch, `--port` to change the website port,
 and `--adb /path/to/adb` to select platform-tools. To use an existing database,
-set `XRGPU_DATABASE_URL`; `main.py` skips Docker and applies SQL to that database.
+set `XRGPU_DATABASE_URL`; `main.py --developer` skips Docker and applies SQL to that database.
 SQL setup needs permission to create the `xrgpu_benchmarks` schema and its tables.
 Database configuration is
 never sent to the browser or packaged into the app.
@@ -91,7 +95,7 @@ Only existing files in these known locations are selected; no downloads or PATH
 changes are needed. Custom installation locations can be selected explicitly:
 
 ```powershell
-uv run python main.py --adb "C:\Program Files\Meta Quest Developer Hub\resources\bin\adb.exe"
+uv run python main.py --developer --adb "C:\Program Files\Meta Quest Developer Hub\resources\bin\adb.exe"
 ```
 
 An invalid explicit override reports an error without falling back to another
@@ -275,7 +279,7 @@ idempotency; conflicting retries cannot overwrite existing data. The Compose
 project stays `xrgpu-benchmarks`, preserving its
 `xrgpu-benchmarks_benchmark-postgres` volume across this relocation. Compose lives
 in `engine/compose.yaml`; `.env` and `.state/debug.keystore` must be retained. Versioned
-pending migrations are applied by `main.py` to existing volumes too. Rerunning the
+pending migrations are applied by `main.py --developer` to existing volumes too. Rerunning the
 SQL files preserves collected rows and skips applied versions. No volume reset is required.
 
 Reports contain device capabilities, OS/runtime/suite identity, synthetic workload
@@ -336,7 +340,7 @@ the per-layer script split.
 
 Stats for Nerds now offers paired stock/stock and stock/candidate matmul experiments,
 individual dispatch evidence, shader provenance, and a GPU-timestamps-off latency mode.
-See [the kernel workflow](../kernels/README.md) for authoring, building, returning reports,
+See [the kernel workflow](../docs/kernel-development.md) for authoring, building, returning reports,
 and the device validation gates. These additions do not establish an on-device speedup.
 
 
@@ -350,7 +354,7 @@ MLP/attention segments. Both suites ship in the APK.
 
 The direct Vulkan resident matmul runner avoids per-sample host tensor transfers;
 its kernels and timing scope differ from ExecuTorch and are reported separately.
-See [Device support and hardware validation](../kernels/PORTABILITY.md) for building,
+See [Device support and hardware validation](../docs/PORTABILITY.md) for building,
 negative controls, the local qualification commands, and remaining hardware gates.
 PostgreSQL migration 002 allows additional registered execution backends without
 rewriting existing reports.

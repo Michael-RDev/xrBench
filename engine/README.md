@@ -1,9 +1,21 @@
-# Engine startup
+# Maintainer and developer startup
+
+CPU/GPU benchmark kernels and calibration shaders are owned by xrGPU. Builds
+fetch its verified commit from `dependencies.json`; the local source cache is an
+ignored dependency. See [kernel development](../docs/kernel-development.md) for
+read credentials, offline caching, provenance, and updating the pin.
+
+Visitors use the hosted website: connect an authorized headset by USB and press
+Run. They do not run these commands or install a local database.
+
+`uv run python main.py` previews the packaged browser website on port 8765 and
+saves reports locally without Docker or PostgreSQL. The remaining instructions
+are for the separate development application and Stats for Nerds.
 
 From the repository root, run:
 
 ```sh
-uv run python main.py
+uv run python main.py --developer
 ```
 
 This opens Docker Desktop when needed on macOS/Windows, waits for Docker,
@@ -35,7 +47,7 @@ PostgreSQL stays running with its data intact.
 
 The database container, SQL files, and server can still be run separately using
 the commands below. The module entry point `python -m src --developer` starts only
-the server; automatic setup belongs to `main.py`.
+the server; automatic setup belongs to `main.py --developer`.
 
 ## 1. Configure and start PostgreSQL yourself
 
@@ -89,7 +101,7 @@ add `--no-open` to suppress it. `--port` selects another port and
 `uv run python -m src --developer` and `uv run python -m engine --port 8766`
 remain available.
 In this manual mode, missing database setup stops startup with instructions. The
-server does not apply SQL. The old `--migrate-only` option is removed; use `main.py`
+server does not apply SQL. The old `--migrate-only` option is removed; use `main.py --developer`
 for automatic setup or execute the SQL files yourself.
 
 To use an existing PostgreSQL server, set `XRGPU_DATABASE_URL`, manually apply the

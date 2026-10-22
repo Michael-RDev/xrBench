@@ -16,13 +16,24 @@ Its existing APIs and local build workflow remain available.
 
 On the hosted site, **Run** opens the USB device chooser if needed, authenticates,
 downloads and verifies the matched APK, installs it, probes native capabilities,
-and executes the standard 63 GPU cases. Installation
+and executes all 63 GPU cases using the Standard measurement preset: 20 warmups
+and 100 measured samples per successful case, automatic calibration, and shader
+dispatch tracing. Visitors have no benchmark settings to configure. Installation
 is skipped when the headset already has that exact APK. The user must enable
 headset developer mode, use a data cable, grant browser USB access, and approve
 USB debugging inside the headset. Windows drivers and Linux USB permissions can
 still prevent WebUSB access; no universal driver-free claim is made. Another ADB
 process or tab holding the USB interface must release it before the browser can
 connect. The website never kills other programs or uninstalls an incompatible APK.
+
+The homepage shows the current USB device and **Run**. Completed sessions stay in
+collapsed **Previous runs** until selected; explicit report links still open them.
+**Back to headset** clears that selection and its URL parameters. USB detection is
+shown separately from connection and verified readiness. Connection preparation
+does not display benchmark timing or progress. An occupied interface shows
+**Retry connection** and **Cancel**; status polling does not repeatedly claim it.
+Retry or an observed unplug/reconnect makes a new connection attempt using the
+same session. Cancel before launch completes without communicating with the device.
 
 The distributed app ID is `org.xrgpu.benchmarks.web`, separate from the developer
 app. Its full activity name remains `org.xrgpu.benchmarks.MainActivity`. It is
@@ -34,7 +45,9 @@ and report schema version 2 are unchanged.
 `browser/controller.mjs` owns hosted GPU-default sessions and legacy CPU/GPU
 recovery. It persists session
 identities and launch intent in IndexedDB before sending commands, holds a Web
-Lock throughout the session, and recovers existing reports after refresh or USB loss.
+Lock while a worker owns the device, and recovers existing reports after refresh or USB loss.
+Failures and page exit release the USB handle and lock; recovery reacquires the
+lock and reloads the saved session before issuing any command.
 It never repeats an uncertain native launch. Closing the tab releases USB; the
 current native phase may finish on the headset; reconnecting recovers and validates
 its final report. For legacy multi-phase sessions, the next phase waits for this
@@ -52,6 +65,17 @@ history, pending deliveries, and authentication credentials. Finished native
 reports are sent automatically to the website's report receiver; USB credentials
 and browser session/connection identifiers are never included in that request.
 **Download results JSON** exports the session’s native reports and state.
+New distributions select Standard; saved Smoke sessions retain their original
+configuration and recover without restarting or changing sample counts.
+
+The native reports retain input shapes, operation parameters, FP32 precision and
+fixture seeds; correctness before/after measurement; every timing sample; GPU
+timestamp spans and individual dispatches; shader source paths and SPIR-V hashes;
+workgroup sizes; staging/submission costs; calibration; thermal/charging state;
+and device, driver and build identities. Missing GPU metrics stay unavailable.
+Incorrect or unstable rows have no accepted timing summary, but keep their raw
+evidence. Timings overlap: dispatch sums, GPU span, staging and execution latency
+must not be added together. See [measurement definitions](../../engine/MEASUREMENTS.md).
 
 ### Automatic report delivery
 
@@ -95,6 +119,7 @@ Production hosting must route the same-origin report endpoint to durable storage
 using this contract. A static-only deployment returns an error and leaves reports
 queued in the browser. This change provides the local testing receiver; it does
 not provision or upload to a public collection service.
+Supabase integration is deferred; local JSON capture remains the default.
 
 ### Build and sign (maintainers only)
 
@@ -148,12 +173,22 @@ For a local preview of the packaged release, `uv run python -m src` serves
 `dist/` on localhost port 8765 and captures submitted reports outside that folder.
 It starts neither desktop ADB nor PostgreSQL and exposes no benchmark control APIs.
 Chrome permits WebUSB on the localhost secure context; remote hosting requires
-HTTPS. `uv run python main.py` starts Docker, PostgreSQL, and pending SQL, then opens
+HTTPS. `uv run python main.py` opens this same browser preview.
+`uv run python main.py --developer` starts Docker, PostgreSQL, and pending SQL, then opens
 the existing developer application on port 8766, including Stats for Nerds and its
 local APIs. `uv run python -m src --developer` remains the server-only alternative.
 See [engine startup](../../engine/README.md).
 
 ### Verification and release qualification
+
+Runner builds fetch the immutable xrGPU kernel package pinned in
+`dependencies.json`. Configure the CI secret `XRGPU_READ_TOKEN` with read access
+to the private xrGPU repository; maintainers can also use their Git credential
+helper. Run `uv run python -m engine.kernel_package fetch` before native tests.
+The verified sources stay in ignored build dependencies and compiled kernels ship
+inside the APK. Visitors need no GitHub access. Reports and runner metadata include
+the xrGPU commit and package digest; changing the pin requires rebuilding the APK.
+See [kernel development](../../docs/kernel-development.md).
 
 `npm test` covers the browser transport, controller, storage, frontend and demo.
 `python -m pytest` includes cross-language configuration, identity, validation and
@@ -300,7 +335,7 @@ uv run --extra export --group dev python -m layers.export
 uv run --extra export --group dev python -m engine.verify_cpu
 uv run --extra export --group dev python -m engine.build
 uv run --group dev python -m pytest -q
-uv run python main.py
+uv run python main.py --developer
 ```
 
 Both local web interfaces are buildless; the hosted distribution uses the bundler described above. Host CPU correctness
@@ -308,4 +343,4 @@ covers both the 63 standard and 17 development cases using the shared references
 Browser fixtures use synthetic evidence and must not be submitted as hardware qualification.
 The Quest 3 observations above do not qualify a second Android XR device or establish
 driver-free support on a clean computer.
-See [hardware qualification](../../kernels/PORTABILITY.md).
+See [hardware qualification](../../docs/PORTABILITY.md).

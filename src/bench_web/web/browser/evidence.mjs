@@ -1,6 +1,7 @@
 import {gpuEligibility} from '../processor-policy.mjs';
 export const terminal = new Set(['complete', 'failed', 'canceled']);
 export const runPattern = /^run-[0-9a-f]{32}$/;
+const gpuSpanScopes = new Set(['single graph, common queue timestamp domain', 'single dispatch sequence, common queue timestamp domain']);
 export class EvidenceError extends Error {}
 const requireValue = (condition, message) => { if (!condition) throw new EvidenceError(message); };
 export function canonical(value) {
@@ -22,7 +23,10 @@ export function validateManifest(m) {
   requireValue(Array.isArray(m.backends), 'Invalid runner backend list');
   for (const [processor, backend] of [['cpu', 'executorch_cpu'], ['gpu', 'executorch_vulkan']]) {
     const c = m.configurations?.[processor];
-    requireValue(c && c.backend === backend && c.mode === 'isolated' && c.preset === 'smoke' && c.workload_suite === 'standard' && c.validation_control === 'none' && !c.experiment, 'Invalid standard run configuration');
+    // Keep older releases and saved Smoke sessions recoverable. New distributions
+    // select Standard (20 warmups / 100 samples) in their immutable configuration.
+    requireValue(c && c.backend === backend && c.mode === 'isolated' && ['smoke', 'standard'].includes(c.preset) && c.workload_suite === 'standard' && c.validation_control === 'none' && !c.experiment, 'Invalid standard run configuration');
+    requireValue(c.calibration === 'auto' && (c.profiling ?? 'trace') === 'trace', 'Public runs require automatic calibration and dispatch tracing');
     requireValue(m.backends.includes(backend) && canonical(c.cases) === canonical(m.catalog.cases.map(row => row.id)), 'Runner workloads differ from the catalog');
     for (const key of ['suite_revision', 'runner_revision', 'runtime_revision', 'apk_sha256']) requireValue(typeof m[key] === 'string' && m[key] && c[key] === m[key], 'Runner revision mismatch');
   }
@@ -55,8 +59,11 @@ export function distribution(values) {
 export function summarize(report) {
   const result = structuredClone(report);
   for (const row of result.results) {
-    row.timings = Object.fromEntries(['execution_ms', 'model_ms', 'gpu_ms', 'gpu_span_ms', 'input_staging_ms', 'output_staging_ms', 'submit_and_wait_ms'].map(k => [k, distribution(row.samples.map(s => s[k]))]));
-    row.timing_valid = row.timing_valid !== false && row.status === 'passed' && ['correctness', 'correctness_before', 'correctness_after'].every(k => row[k]?.passed !== false) && !row.thermal_discontinuity && !row.focus_lost;
+    const stable = [['thermal_start', 'thermal_status'], ['charging_start', 'charging']].every(([start, sample]) =>
+      new Set([row[start], ...row.samples.map(s => s[sample])].filter(v => v != null)).size <= 1);
+    row.timing_valid = row.timing_valid !== false && row.status === 'passed' && ['correctness', 'correctness_before', 'correctness_after'].every(k => row[k]?.passed !== false) && !row.thermal_discontinuity && !row.focus_lost && stable;
+    row.timings = Object.fromEntries(['execution_ms', 'model_ms', 'gpu_ms', 'gpu_span_ms', 'input_staging_ms', 'output_staging_ms', 'submit_and_wait_ms'].map(k => [k,
+      row.timing_valid ? distribution(row.samples.map(s => k === 'gpu_span_ms' && !gpuSpanScopes.has(s.gpu_span_scope) ? null : s[k])) : null]));
   }
   result.counts = Object.fromEntries(['passed', 'failed', 'skipped', 'interrupted'].map(s => [s, result.status === 'running' && s === 'interrupted' ? 0 : result.results.filter(r => r.status === s).length]));
   return result;

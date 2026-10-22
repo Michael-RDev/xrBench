@@ -6,6 +6,7 @@ import pytest
 from engine.controller import Controller
 from layers import revision, catalog
 from engine.reports import digest, save
+from engine.kernel_package import provenance
 
 
 class FakeADB:
@@ -15,7 +16,7 @@ class FakeADB:
 
 @pytest.fixture
 def controller(tmp_path):
-    save(tmp_path/"apk.json",dict(suite_revision=revision(),apk_sha256="a"*64,runtime_revision="test-runtime",runner_revision="test-runner"))
+    save(tmp_path/"apk.json",dict(suite_revision=revision(),apk_sha256="a"*64,runtime_revision="test-runtime",runner_revision="test-runner",kernel_package=provenance()))
     return Controller(FakeADB(),None,tmp_path/"runs",tmp_path,start_workers=False)
 
 

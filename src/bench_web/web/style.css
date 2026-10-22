@@ -265,3 +265,11 @@ button,a,select{touch-action:manipulation}select:focus-visible{outline:3px solid
 .advanced-cpu summary{cursor:pointer;width:fit-content;padding:8px 0}
 .advanced-cpu p{max-width:48ch;line-height:1.6;margin:8px 0 12px}
 .chip-regions{grid-template-columns:repeat(auto-fit,minmax(0,1fr))}
+.device-connection{font-size:12px;font-weight:600;color:var(--muted);margin:0 0 8px}
+.device-panel[data-state=ready] .device-connection{color:#416747}
+.device-panel[data-state=blocked] .device-connection{color:#945326}
+.previous-runs{border-top:1px solid var(--line);padding:20px 0;font-size:13px}
+.previous-runs summary{cursor:pointer;width:fit-content}
+.previous-runs ul{list-style:none;padding:8px 0;margin:0}
+.previous-runs li{padding:6px 0}
+.previous-runs .text-action{text-align:left;line-height:1.6}

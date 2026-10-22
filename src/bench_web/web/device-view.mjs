@@ -11,6 +11,12 @@ export function deviceView(status,serviceError='',selectedSerial=null){
   if(!device)return {...view,kind:'absent',label:'Connect XR device',help:'Connect by USB and allow debugging to discover its processor.'};
   const identity=device.identity||{device_name:device.model,chip_name:device.soc_model||'Processor not identified',identity_source:'unknown',execution_location:'unknown'};
   const base={...view,serial:device.serial,connectionId:device.connection_id,identity};
+  if(device.connection_state){
+    const kind=device.connection_state;
+    return {...base,kind,authorized:kind==='ready',label:identity.device_name||device.model||'USB headset',
+      connectionLabel:({detected:'USB detected',connecting:'Connecting',ready:'Ready',blocked:'Connection blocked'})[kind],
+      help:kind==='detected'?'Press Run to connect and identify your headset.':device.connection_message||''};
+  }
   if(device.state==='offline')return {...base,kind:'offline',label:'Device is offline',help:'Reconnect the cable and wake your device.'};
   if(device.state==='unauthorized')return {...base,kind:'unauthorized',label:identity.device_name||'Connected device',help:'Put on your headset and allow USB debugging.'};
   if(device.state!=='device')return {...base,kind:'offline',label:'Device unavailable',help:device.reason||'Reconnect your device.'};

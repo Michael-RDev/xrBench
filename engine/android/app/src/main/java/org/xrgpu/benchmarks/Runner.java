@@ -284,6 +284,10 @@ public final class Runner {
                 while((n=in.read(data))!=-1)bytes.write(data,0,n);
                 kernelManifest=new JSONObject(bytes.toString("UTF-8"));
             }
+            JSONObject expectedPackage=config.getJSONObject("kernel_package");
+            JSONObject builtPackage=kernelManifest.getJSONObject("kernel_package");
+            for(String key:Arrays.asList("repository","commit","package_id","package_path","content_sha256"))
+                if(!builtPackage.getString(key).equals(expectedPackage.getString(key)))throw new SessionFailure("Kernel package identity mismatch; rebuild APK");
             JSONObject kernelBuild=new JSONObject(kernelManifest.toString());kernelBuild.remove("shaders");
             report.put("shaders",new JSONObject()).put("kernel_build",kernelBuild);
             String experiment=config.optString("experiment","none");

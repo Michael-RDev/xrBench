@@ -1,4 +1,4 @@
-#include "kernels/cpu/matmul.h"
+#include "cpu/matmul.h"
 #include <cassert>
 #include <cmath>
 #include <iostream>

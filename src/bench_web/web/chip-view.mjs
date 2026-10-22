@@ -23,7 +23,7 @@ export function chipEvidence(session,reports,catalog,now=Date.now()){
     const n=values.length;return {name:r.operation,ms:n?(values[Math.floor(n/2)]+values[Math.floor((n-1)/2)])/2:null,samples:n};
   });
   // Elapsed display time is separate from native measurement timestamps.
-  const elapsed=Math.max(0,((session.finished_at||now/1000)-(session.created_at||now/1000))*1000);
+  const elapsed=Math.max(0,((session.finished_at||now/1000)-(session.started_at||session.created_at||now/1000))*1000);
   let eta=null;
   const durations=rows.filter(r=>r.status==='passed'&&r.case_wall_ms>0).map(r=>r.case_wall_ms).slice(-5).sort((a,b)=>a-b);
   if(!stale&&active&&progress.phase==='measurement'&&durations.length>=3)eta=durations[Math.floor(durations.length/2)]*Math.max(0,cases.length-count);

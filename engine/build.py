@@ -50,10 +50,11 @@ def build_environment(toolchain, pins):
 
 def build(jobs=4, web=False):
     from engine.prepare import verify
-    from engine import kernels
+    from engine import kernels, kernel_package
+    package = kernel_package.resolve(fetch=True)
     verify()
     build_dir = BUILD
-    kernels.prepare_sources(build_dir / "candidate_sources")
+    kernels.prepare_sources(build_dir / "candidate_sources", package)
     pins = json.loads((ROOT / "dependencies.json").read_text())
     for dep in ("executorch", "openxr"):
         actual = subprocess.check_output(["git", "-C", str(ROOT / "artifacts/deps" / dep), "rev-parse", "HEAD"], text=True).strip()
@@ -74,14 +75,12 @@ def build(jobs=4, web=False):
         raise RuntimeError("Layer source changed; rerun uv run --extra export --group dev python -m layers.export")
     source_paths = sorted((BASE / "native").rglob("*")) + sorted((BASE / "android").rglob("*.java"))
     source_paths += [BASE / "prepare.py", BASE / "build.py", ROOT / "dependencies.json"] + sorted((BASE / "patches").glob("*.patch"))
-    source_paths += [BASE / "kernel_hooks.py", BASE / "kernels.py"] + sorted(kernels.KERNELS.rglob("*.glsl")) + sorted(kernels.KERNELS.rglob("*.yaml"))
-    source_paths += sorted(kernels.KERNELS.rglob("*.comp"))
-    source_paths += sorted(kernels.KERNELS.rglob("*.h"))
+    source_paths += [BASE / "kernel_hooks.py", BASE / "kernels.py", BASE / "kernel_package.py"]
     source_paths += sorted((BASE / "backends").rglob("*.py"))
     source_paths += [BASE / "android/app/src/main/AndroidManifest.xml"]
     source_paths += sorted((BASE / "android").glob('*.gradle')) + [BASE / 'android/app/build.gradle']
-    source_paths += sorted(kernels.KERNELS.rglob("*.json")) + sorted(kernels.KERNELS.rglob("*.glslh"))
-    identity = hashlib.sha256(b"".join(p.read_bytes() for p in source_paths if p.is_file())).hexdigest()
+    identity = hashlib.sha256(kernel_package.canonical(kernel_package.provenance()) +
+                             b"".join(p.read_bytes() for p in source_paths if p.is_file())).hexdigest()
     dest = build_dir / "lib/arm64-v8a"
     dest.mkdir(parents=True, exist_ok=True)
     native = build_dir / "native"
@@ -99,11 +98,13 @@ def build(jobs=4, web=False):
         raise RuntimeError("Shaderc required. Run python -m engine.bootstrap_shaderc first.")
     run([cmake, "-S", BASE / "native", "-B", native,
          "-G", generator, f"-DPYTHON_EXECUTABLE={Path(sys.executable).as_posix()}", f"-DGLSLC_PATH={Path(glslc).as_posix()}",
+         f"-DXRGPU_KERNEL_PACKAGE_ROOT={package.as_posix()}",
+         f"-DXRGPU_CPU_KERNEL_SOURCE={kernel_package.source_url('cpu/matmul.h')}",
          f"-DCMAKE_TOOLCHAIN_FILE={ndk}/build/cmake/android.toolchain.cmake", "-DANDROID_ABI=arm64-v8a",
          "-DANDROID_PLATFORM=android-29", "-DANDROID_STL=c++_shared", "-DCMAKE_BUILD_TYPE=Release",
          f'-DXRGPU_ET_REVISION={pins["executorch"]["commit"]}', f"-DXRGPU_RUNNER_REVISION={identity}"], env=env)
     run([cmake, "--build", native, "--target", "xrgpu_benchmarks", "xrbench_cpu", "-j", jobs], env=env)
-    kernel_manifest = kernels.manifest(native, glslc)
+    kernel_manifest = kernels.manifest(native, glslc, package)
     shutil.copy2(native / "libxrgpu_benchmarks.so", dest)
     shutil.copy2(native / "libxrbench_cpu.so", dest)
     loader = next(native.rglob("libopenxr_loader.so"))
@@ -117,6 +118,7 @@ def build(jobs=4, web=False):
         shutil.copy2(bundle / name, assets / name)
     save(build_dir / "assets/kernel-manifest.json", kernel_manifest)
     shutil.copytree(ROOT / "licenses", build_dir / "assets/licenses", dirs_exist_ok=True)
+    shutil.copy2(package / "LICENSE", build_dir / "assets/licenses/xrgpu-benchmark-LICENSE.txt")
     shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", build_dir / "assets")
     STATE.mkdir(exist_ok=True)
     key = STATE / "debug.keystore"
@@ -142,7 +144,7 @@ def build(jobs=4, web=False):
             raise RuntimeError('Web runner signing certificate differs from the pinned distribution identity')
     metadata = dict(apk_sha256=hashlib.sha256(apk.read_bytes()).hexdigest(), suite_revision=revision(),
                     runner_revision=identity, runtime_revision=pins["executorch"]["commit"], package="org.xrgpu.benchmarks.web" if web else "org.xrgpu.benchmarks",
-                    device_profiles_version=1, backends=["executorch_vulkan","vulkan_resident","executorch_cpu","cpu_resident"], kernel_experiments_version=1, candidate_revision=kernels.source_identity())
+                    device_profiles_version=1, backends=["executorch_vulkan","vulkan_resident","executorch_cpu","cpu_resident"], kernel_experiments_version=1, candidate_revision=kernels.source_identity(), kernel_package=kernel_package.provenance())
     if web:
         metadata.update(version_code=int(env['XRBENCH_WEB_VERSION_CODE']), signing_certificate_sha256=match[1].lower())
     save(build_dir / ('web-apk.json' if web else 'apk.json'), metadata)

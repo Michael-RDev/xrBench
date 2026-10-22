@@ -8,9 +8,10 @@
 For the hosted homepage, build the signed runner and run `npm run build`; deploy
 `dist/` over HTTPS. Visitors need only a supported browser and an authorized USB
 headset. For the local developer application, use the repository-root uv environment
-and launch with `uv run python main.py` on port 8766. This command starts Docker,
+and launch with `uv run python main.py --developer` on port 8766. This command starts Docker,
 PostgreSQL, and pending SQL migrations automatically. See [engine startup](../engine/README.md).
-`uv run python -m src` now serves the packaged browser homepage on port 8765.
+`uv run python main.py` and `uv run python -m src` serve the packaged browser
+homepage on port 8765 with local JSON capture, without Docker or database setup.
 See [setup and architecture](../README.md). Generated bundles, APK, credentials,
 signing key, and saved reports live under the root-level `engine/` directory and
 are ignored by Git.

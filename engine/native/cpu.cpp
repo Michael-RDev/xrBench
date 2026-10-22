@@ -1,5 +1,5 @@
 #include "tensor_validation.h"
-#include "kernels/cpu/matmul.h"
+#include "cpu/matmul.h"
 #include <executorch/extension/module/module.h>
 #include <executorch/extension/tensor/tensor.h>
 #include <executorch/runtime/platform/runtime.h>
@@ -110,7 +110,7 @@ extern "C" JNIEXPORT jstring JNICALL Java_org_xrgpu_benchmarks_NativeCPU_stats(J
   try{auto& s=session(handle);Json stats={{"processor","cpu"},{"model_ms",s.model_ms},{"load_ms",s.load_ms},{"output_shape",s.shape},
       {"gpu_ms",nullptr},{"gpu_span_ms",nullptr},{"dispatch_count",nullptr},{"dispatches",Json::array()},
       {"kernel_variant",s.candidate?"candidate":"stock"},{"candidate_selected",s.candidate},{"validation_control",s.control},
-      {"kernel_source",s.resident?"kernels/cpu/matmul.h":"ExecuTorch portable CPU kernels"},
+      {"kernel_source",s.resident?XRGPU_CPU_KERNEL_SOURCE:"ExecuTorch portable CPU kernels"},
       {"kernel_name",s.resident?(s.candidate?"cpu_matmul_neon":"cpu_matmul_scalar"):"executorch_portable"},
       {"threading_policy","single calling thread"},{"threads",1}};
     return env->NewStringUTF(stats.dump().c_str());

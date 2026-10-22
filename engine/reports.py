@@ -56,12 +56,17 @@ def distribution(values):
 def summarize(report):
     for result in report.get("results", []):
         samples = result.get("samples", [])
-        result["timings"] = {key: distribution([s.get(key) for s in samples])
-                             for key in ("execution_ms", "model_ms", "gpu_ms", "gpu_span_ms", "input_staging_ms", "output_staging_ms", "submit_and_wait_ms")}
+        stable = all(len({value for value in [result.get(start), *[s.get(sample) for s in samples]]
+                          if value is not None}) <= 1
+                     for start, sample in (("thermal_start", "thermal_status"), ("charging_start", "charging")))
         result["timing_valid"] = (result.get('timing_valid') is not False and result.get("status") == "passed"
                                   and all(result.get(k,{}).get('passed') is not False for k in ('correctness','correctness_before','correctness_after'))
                                   and not result.get("thermal_discontinuity", False)
-                                  and not result.get("focus_lost", False))
+                                  and not result.get("focus_lost", False) and stable)
+        result["timings"] = {key: distribution([
+            None if key == "gpu_span_ms" and s.get("gpu_span_scope") not in GPU_SPAN_SCOPES else s.get(key)
+            for s in samples]) if result["timing_valid"] else None
+            for key in ("execution_ms", "model_ms", "gpu_ms", "gpu_span_ms", "input_staging_ms", "output_staging_ms", "submit_and_wait_ms")}
     report["counts"] = {s: sum(r.get("status") == s for r in report.get("results", []))
                         for s in ("passed", "failed", "skipped", "interrupted")}
     if report.get("status") == "running":

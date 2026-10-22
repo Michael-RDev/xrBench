@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {WebUsbTransport, connectionMessage} from '../web/browser/transport.mjs';
+import {WebUsbTransport, connectionMessage, connectionError} from '../web/browser/transport.mjs';
+import {AdbDaemonWebUsbDevice} from '@yume-chan/adb-daemon-webusb';
 import {sha256} from '../web/browser/evidence.mjs';
 import {manifest} from './browser-fixtures.mjs';
 
@@ -18,6 +19,20 @@ test('denied and missing permissions and busy USB interfaces have distinct recov
   assert.match(connectionMessage(new DOMException('', 'NotAllowedError')), /permission was denied/);
   assert.match(connectionMessage(new DOMException('', 'NotFoundError')), /No headset selected/);
   assert.match(connectionMessage(Error('Failed to claim interface')), /Close other headset tools/);
+});
+
+test('the actual USB library busy error retains its category and closes the opened device', async () => {
+  const cause = new AdbDaemonWebUsbDevice.DeviceBusyError(new DOMException('claim failed', 'NetworkError'));
+  let closes = 0;
+  const raw = {opened: true, close: async () => {closes++; raw.opened = false;}};
+  const t = new WebUsbTransport();
+  await assert.rejects(t.connect({serial: 'busy', raw, connect: async () => {throw cause;}}), error => {
+    assert.equal(error.code, 'usb_busy'); assert.match(error.message, /Retry connection/);
+    assert.equal(connectionError(Error('outer wrapper', {cause: error})).code, 'usb_busy'); return true;
+  });
+  assert.equal(closes, 1); assert.equal(t.device, null); assert.equal(t.adb, null);
+  for (const message of ['The device is already in use by another program', 'The device is already in used by another program'])
+    assert.equal(connectionError(Error(message)).code, 'usb_busy');
 });
 
 test('process absence is distinguished from a failed liveness command', async () => {

@@ -3,9 +3,15 @@ import {mkdir, readFile, writeFile, copyFile, access, readdir} from 'node:fs/pro
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
+import {reportEndpoint} from '../src/bench_web/web/browser/report-endpoint.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const out = path.resolve(root, process.env.XRBENCH_WEB_OUTPUT || 'dist');
+const reportUrl = process.env.XRBENCH_REPORT_ENDPOINT || './api/reports';
+const reportTarget = reportEndpoint(reportUrl, 'https://xrbench.invalid/');
+if (reportUrl !== './api/reports' && (!reportUrl.startsWith('https://') || reportTarget.origin === 'https://xrbench.invalid'))
+  throw Error('XRBENCH_REPORT_ENDPOINT must be an absolute HTTPS receiver URL.');
+const receiverOrigin = reportUrl === './api/reports' ? '' : ' ' + reportTarget.origin;
 // Keep arbitrary output paths from overwriting source or local state.
 if (!out.startsWith(path.join(root, 'dist') + path.sep) && out !== path.join(root, 'dist') && !out.startsWith(path.join(root, 'artifacts') + path.sep)) throw Error('Build output must be dist/ or a directory inside artifacts/');
 await mkdir(path.join(out, 'bench'), {recursive: true});
@@ -26,6 +32,7 @@ const bundled = await build({entryPoints: [path.join(root, 'src/bench_web/web/ap
   }}]});
 let html = await readFile(path.join(root, 'src/bench_web/web/index.html'), 'utf8');
 html = html.replace('<html lang="en">', '<html lang="en" data-transport="webusb">')
+  .replace('<head>', '<head>\n  <meta name="xrbench-report-endpoint" content="' + reportUrl.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;') + '">')
   .replaceAll('"/bench/', '"./bench/').replace('href="/"', 'href="./"')
   .replace(/<details id="setup-help"[\s\S]*?<\/details>/, '')
   .replace('<a id="stats-link"', '<a hidden id="stats-link"')
@@ -48,7 +55,7 @@ for (const name of packages) {
 }
 // Supported by static hosts with _headers; equivalent policy is documented for other hosts.
 await writeFile(path.join(out, '_headers'), `/*
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'${receiverOrigin}; object-src 'none'; base-uri 'self'; frame-ancestors 'none'
   Permissions-Policy: usb=(self)
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer

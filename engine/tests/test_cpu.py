@@ -4,14 +4,21 @@ import subprocess
 from pathlib import Path
 import pytest
 from engine.backends import get_backend
-from engine.paths import ROOT
+from engine.kernel_package import resolve
 
 
 def test_cpu_kernels_irregular_tails(tmp_path):
-    compiler=shutil.which('c++')
-    if not compiler:pytest.skip('C++ compiler required')
-    output=tmp_path/'cpu'
-    subprocess.run([compiler,'-std=c++17','-O2','-I',str(ROOT),str(Path(__file__).with_name('native_cpu.cpp')),'-o',str(output)],check=True,capture_output=True)
+    compiler = shutil.which('c++') or shutil.which('cl')
+    if not compiler:
+        pytest.skip('C++ compiler required')
+    output = tmp_path / 'cpu.exe'
+    source = Path(__file__).with_name('native_cpu.cpp')
+    if Path(compiler).stem.lower() == 'cl':
+        command = [compiler, '/nologo', '/std:c++17', '/EHsc', '/O2', '/I' + str(resolve()),
+                   str(source), '/Fe' + str(output), '/Fo' + str(tmp_path / 'cpu.obj')]
+    else:
+        command = [compiler, '-std=c++17', '-O2', '-I', str(resolve()), str(source), '-o', str(output)]
+    subprocess.run(command, check=True, capture_output=True)
     assert 'correctness passed' in subprocess.check_output([output],text=True)
 
 

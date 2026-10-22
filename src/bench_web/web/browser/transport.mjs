@@ -1,18 +1,30 @@
 import {Adb, AdbDaemonTransport} from '@yume-chan/adb';
-import {AdbDaemonWebUsbDeviceManager} from '@yume-chan/adb-daemon-webusb';
+import {AdbDaemonWebUsbDevice, AdbDaemonWebUsbDeviceManager} from '@yume-chan/adb-daemon-webusb';
 import AdbWebCredentialStore from '@yume-chan/adb-credential-web';
 import {sha256, runPattern, EvidenceError} from './evidence.mjs';
 
 const quote = value => "'" + String(value).replaceAll("'", "'\\''") + "'";
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 export class MissingFile extends Error {}
-export function connectionMessage(error) {
-  if (error?.name === 'NotFoundError') return 'No headset selected. Connect a USB data cable, enable headset developer mode, then press Run.';
-  if (error?.name === 'NotAllowedError' || error?.name === 'SecurityError') return 'USB permission was denied. Allow this website to access the headset, then retry.';
-  if (/busy|claim|already.*open/i.test(error?.message || '')) return 'The USB interface is in use. Close other headset tools or browser tabs, then retry.';
-  if (/Unable to open|Access denied/i.test(error?.message || '')) return 'The browser could not open the headset USB interface. Check the cable and device USB driver, then retry.';
-  return error?.message || 'Headset connection failed. Reconnect the USB cable and retry.';
+export class ConnectionError extends Error {
+  constructor(code, message, cause) {super(message, {cause}); this.name = 'ConnectionError'; this.code = code;}
 }
+export function connectionError(error) {
+  if (error instanceof ConnectionError) return error;
+  const causes = new Set();
+  for (let cause = error; cause && !causes.has(cause); cause = cause.cause) {
+    causes.add(cause);
+    if (cause instanceof ConnectionError) return cause;
+    if (cause instanceof AdbDaemonWebUsbDevice.DeviceBusyError || cause.name === 'DeviceBusyError'
+        || /busy|claim|already.*open|already in use(?:d)?|USB interface is in use|another xrBench tab/i.test(cause.message || ''))
+      return new ConnectionError('usb_busy', 'The USB interface is in use. Close other headset tools (such as Unity, Meta Quest Developer Hub, SideQuest, or ADB) and other headset browser tabs, then select Retry connection.', error);
+    if (cause.name === 'NotFoundError') return new ConnectionError('not_selected', 'No headset selected. Connect a USB data cable, enable headset developer mode, then press Run.', error);
+    if (cause.name === 'NotAllowedError' || cause.name === 'SecurityError') return new ConnectionError('permission_denied', 'USB permission was denied. Allow this website to access the headset, then retry.', error);
+  }
+  if (/Unable to open|Access denied/i.test(error?.message || '')) return new ConnectionError('connection_failed', 'The browser could not open the headset USB interface. Check the cable and device USB driver, then retry.', error);
+  return new ConnectionError('connection_failed', error?.message || 'Headset connection failed. Reconnect the USB cable and retry.', error);
+}
+export const connectionMessage = error => connectionError(error).message;
 async function collect(stream, limit) {
   const reader = stream.getReader(), chunks = []; let length = 0;
   try {
@@ -64,7 +76,7 @@ export class WebUsbTransport {
       if (!this.adb.subprocess.shellProtocol) throw Error('This headset does not support the required Android shell protocol.');
     } catch (error) {
       await this.close();
-      throw Error(timedOut ? 'USB debugging approval timed out. Put on the headset, allow USB debugging, then retry.' : connectionMessage(error));
+      throw timedOut ? new ConnectionError('approval_timeout', 'USB debugging approval timed out. Put on the headset, allow USB debugging, then retry.', error) : connectionError(error);
     }
     finally {clearTimeout(timer); signal?.removeEventListener('abort', cancel);}
   }

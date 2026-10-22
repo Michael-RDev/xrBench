@@ -56,9 +56,9 @@ not be described as execution on its attached glasses.
 | Backend | Implementation | Measured invocation |
 | --- | --- | --- |
 | `executorch_cpu` | Backend-specific exports and native ExecuTorch portable CPU kernels | JNI staging, CPU forward, output copy |
-| `cpu_resident` | FP32 scalar / ARM NEON matmul in `kernels/cpu/matmul.h` | JNI invocation and CPU matmul; persistent buffers, output copy outside samples |
+| `cpu_resident` | xrGPU FP32 scalar / ARM NEON matmul in `kernels/benchmark/cpu/matmul.h` | JNI invocation and CPU matmul; persistent buffers, output copy outside samples |
 | `executorch_vulkan` | Existing PyTorch export, ExecuTorch runtime and GLSL templates | JNI staging, native forward, output copy |
-| `vulkan_resident` | Direct Vulkan FP32 matmul in `kernels/resident/matmul.comp` | Dispatch encoding, queue submission and completion wait; persistent buffers |
+| `vulkan_resident` | xrGPU direct Vulkan FP32 matmul in `kernels/benchmark/resident/matmul.comp` | Dispatch encoding, queue submission and completion wait; persistent buffers |
 
 Resident matmul uploads the two inputs and builds pipelines once per model, before
 warmup. Output readback is performed for correctness checks outside measured samples.

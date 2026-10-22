@@ -11,7 +11,8 @@ from layers import revision
 
 @pytest.fixture
 def controller(tmp_path):
-    save(tmp_path/'apk.json',dict(suite_revision=revision(),apk_sha256='a'*64,runtime_revision='et',runner_revision='runner',backends=['executorch_cpu','executorch_vulkan']))
+    from engine.kernel_package import provenance
+    save(tmp_path/'apk.json',dict(suite_revision=revision(),apk_sha256='a'*64,runtime_revision='et',runner_revision='runner',backends=['executorch_cpu','executorch_vulkan'],kernel_package=provenance()))
     adb=SimpleNamespace(devices=lambda:dict(devices=[dict(serial='one',model='Quest 3',state='device',supported=True)]),stop=lambda *a:None)
     return Controller(adb,None,tmp_path/'runs',tmp_path,start_workers=False)
 

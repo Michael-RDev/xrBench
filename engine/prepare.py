@@ -70,10 +70,12 @@ def verify():
                 raise RuntimeError("Shader generator has changes beyond CRLF normalization")
             extras = git("ls-files", "--others", "--exclude-standard", cwd=source).stdout.splitlines()
             if any(p.endswith((".glsl", ".yaml", ".cpp", ".h")) for p in extras):
-                raise RuntimeError("Put candidate sources in kernels/, not the pinned dependency checkout")
+                raise RuntimeError("Edit kernel sources in xrGPU and update dependencies.json; do not modify pinned dependencies")
 
 
 def prepare():
+    from engine.kernel_package import resolve
+    resolve(fetch=True)
     pins = json.loads((ROOT / "dependencies.json").read_text())
     for name in ("executorch", "openxr"):
         spec = pins[name]

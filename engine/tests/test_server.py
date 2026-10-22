@@ -57,7 +57,8 @@ def test_http_create_stop_recovery_and_report_download(tmp_path,report):
     def put(value):saved[value["run_id"]]=value;return dict(stored=True,run_id=value["run_id"],sha256=digest(value))
     adb=SimpleNamespace(devices=lambda:dict(devices=[dict(serial="test",state="device",supported=True)]),stop=lambda *args:stops.append(args))
     store=SimpleNamespace(put=put,get=saved.get)
-    save(tmp_path/"apk.json",dict(suite_revision=revision(),runtime_revision="test-runtime",runner_revision="test-runner",apk_sha256="a"*64))
+    from engine.kernel_package import provenance
+    save(tmp_path/"apk.json",dict(suite_revision=revision(),runtime_revision="test-runtime",runner_revision="test-runner",apk_sha256="a"*64,kernel_package=provenance()))
     controller=Controller(adb,store,tmp_path/"runs",tmp_path,start_workers=False)
     server=ThreadingHTTPServer(("127.0.0.1",0),handler(controller,"test-session"))
     worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()
@@ -140,7 +141,8 @@ def test_http_benchmark_session_idempotency_read_stop_and_catalog(tmp_path):
     from layers import revision
     stops=[]
     adb=SimpleNamespace(devices=lambda:dict(devices=[dict(serial='quest',model='Quest 3',state='device',supported=True)]),stop=lambda *a:stops.append(a))
-    save(tmp_path/'apk.json',dict(suite_revision=revision(),runtime_revision='et',runner_revision='runner',apk_sha256='a'*64,backends=['executorch_cpu','executorch_vulkan']))
+    from engine.kernel_package import provenance
+    save(tmp_path/'apk.json',dict(suite_revision=revision(),runtime_revision='et',runner_revision='runner',apk_sha256='a'*64,backends=['executorch_cpu','executorch_vulkan'],kernel_package=provenance()))
     controller=Controller(adb,None,tmp_path/'runs',tmp_path,start_workers=False)
     server=ThreadingHTTPServer(('127.0.0.1',0),handler(controller,'test-session'))
     worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()

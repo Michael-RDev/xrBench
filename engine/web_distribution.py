@@ -36,7 +36,7 @@ def publish(output, build=BUILD):
     templates = {}
     for processor, backend in [('cpu', 'executorch_cpu'), ('gpu', 'executorch_vulkan')]:
         templates[processor], _ = Controller.configuration(owner, dict(
-            backend=backend, mode='isolated', preset='smoke', execution_target='unknown'))
+            backend=backend, mode='isolated', preset='standard', execution_target='unknown'))
     runner = output / 'runner'
     runner.mkdir(parents=True, exist_ok=True)
     filename = checksum + '.apk'

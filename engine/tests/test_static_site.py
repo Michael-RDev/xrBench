@@ -125,7 +125,7 @@ def test_mock_headset_to_browser_delivery_to_local_json(receiver):
 import assert from 'node:assert/strict';
 import {BrowserController} from './src/bench_web/web/browser/controller.mjs';
 import {ReportDelivery} from './src/bench_web/web/browser/report-delivery.mjs';
-import {manifest, nativeReport, MemoryStore} from './src/bench_web/tests/browser-fixtures.mjs';
+import {manifest, optimizationReport, MemoryStore} from './src/bench_web/tests/browser-fixtures.mjs';
 const m = manifest(), store = new MemoryStore(); let config, launches = 0;
 const delivery = new ReportDelivery({store, endpoint: process.argv[2] + '/api/reports'});
 const transport = {supported: true, choose: async () => ({serial:'fixture-only'}),
@@ -133,7 +133,7 @@ const transport = {supported: true, choose: async () => ({serial:'fixture-only'}
   properties: async () => ({model:'Quest 3', sdk:32, abi:'arm64-v8a', soc_model:'Qualcomm Snapdragon XR2 Gen 2'}),
   install: async () => {}, probe: async () => ({backends:{executorch_vulkan:{compatible:true}}}),
   launch: async (_, c) => {config=c; launches++;}, isRunning: async () => false,
-  read: async (_, id, file) => file === 'report.json' ? nativeReport(config) : {run_id:id,status:'complete',completed_cases:63},
+  read: async (_, id, file) => file === 'report.json' ? optimizationReport(config) : {run_id:id,status:'complete',completed_cases:63},
 };
 const controller = new BrowserController({transport, store, delivery, manifestUrl:'https://fixture/runner/manifest.json',
   fetcher: async () => ({ok:true,json:async () => m}), lock:async () => () => {}, sleep:async () => {}});
@@ -143,6 +143,8 @@ assert.equal(controller.sessions[0].status,'complete'); assert.equal(launches,1)
 assert.equal(delivery.snapshot().reports[0].status,'sent');
 const exported = await controller.exportSession(controller.sessions[0].session_id);
 assert.equal(exported.reports[0].results.length,63);
+assert.deepEqual(exported.reports[0], optimizationReport(config));
+assert.equal(config.preset, 'standard');
 controller.dispose(); console.log(config.run_id);
 """
     result = subprocess.run(['node', '--input-type=module', '-', url], input=script, cwd=ROOT,
@@ -151,4 +153,12 @@ controller.dispose(); console.log(config.run_id);
     saved = json.loads((destination / (result.stdout.strip() + '.json')).read_text())
     assert saved['status'] == 'complete' and saved['backend'] == 'executorch_vulkan'
     assert len(saved['results']) == 63 and saved['device']['model'] == 'synthetic'
+    assert saved['configuration']['preset'] == 'standard'
+    assert all(len(row['samples']) == 100 for row in saved['results'])
+    assert saved['results'][0]['fixture_seed'] == 2026
+    assert saved['results'][0]['inputs'] and saved['results'][0]['correctness_after']['passed']
+    assert saved['results'][0]['samples'][0]['dispatches'][0]['local_size'] == [4, 4, 1]
+    assert saved['shaders']['fixture_shader']['spirv_sha256'] == 'c' * 64
+    assert saved['kernel_build']['compiler'] == 'fixture-compiler'
+    assert saved['calibration']['available']
     assert 'serial' not in saved and 'connection_id' not in saved

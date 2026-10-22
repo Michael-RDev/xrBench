@@ -57,7 +57,7 @@ def test_database_result_contains_original_receipt(store, report):
     assert store.result('run-'+'0'*32) is None
 
 
-from engine.tests.test_postgres import store
+from engine.tests.test_postgres import store, uninitialized_store  # noqa: F401
 
 
 def test_stored_report_hash_is_verified_before_export(store, report):
