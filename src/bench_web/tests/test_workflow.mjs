@@ -512,6 +512,25 @@ test('an explicitly linked saved Quest report does not imply a currently connect
   }finally{p.close();}
 });
 
+test('compatibility groups follow primary processors, including mixed-chip headsets and unknown variants',async()=>{
+  const deviceCatalog=structuredClone(devicesCatalog);
+  deviceCatalog.devices.push({id:'unknown-variant',name:'Unknown variant',chips:[],primary_chip_options:['xr2-gen2','missing-chip']});
+  const p=await page('bench',null,{}, {deviceCatalog});
+  try{
+    const doc=p.window.document;
+    const group=kind=>doc.querySelector(`[data-support="${kind}"]`).textContent;
+    assert.match(group('check'),/Meta Quest 3/);
+    assert.match(group('check'),/XREAL Aura.*compute puck; the glasses are not benchmarked/);
+    assert.doesNotMatch(group('check'),/Apple Vision Pro|XREAL One|Unknown variant/);
+    assert.match(group('planned'),/Apple Vision Pro.*Apple M2 or Apple M5/);
+    assert.doesNotMatch(group('unavailable'),/Apple Vision Pro|XREAL Aura/);
+    assert.match(group('unavailable'),/XREAL One/);
+    assert.doesNotMatch(group('unavailable'),/Unknown variant/);
+    assert.match(group('unknown'),/Unknown variant/);
+    assert.equal(doc.querySelectorAll('#device-catalog li').length,deviceCatalog.devices.length);
+  }finally{p.close();}
+});
+
 test('unsupported and ambiguous devices require setup or explicit selection',async()=>{
   for(const devices of [
     [{serial:'3s',model:'Quest 3S',state:'device',supported:false}],

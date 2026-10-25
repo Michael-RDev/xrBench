@@ -1,7 +1,11 @@
 # Bench Web
 
-The local homepage keeps the ivory, graphite and sage palette. Run creates an
-isolated Smoke session containing all 63 standard GPU cases. The active controller
+The homepage explains the 63 GPU tests with connection guidance beside Run,
+above the ASCII headset on phones. Device compatibility lists headsets by their
+primary processor under Check on device, Planned, and Unavailable; catalog recognition
+does not imply hardware qualification. The headset and chip reveal remain the main
+visual, with sentence-case interface labels and the ivory, graphite and sage palette.
+Run creates an isolated Smoke session containing all 63 standard GPU cases. The active controller
 reserves the selected device throughout the run. Browsers display native evidence.
 Stats for Nerds retains
 single-backend controls, development workloads and custom kernel experiments.

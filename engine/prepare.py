@@ -12,8 +12,9 @@ SUBMODULES = [
     "third-party/flatcc", "third-party/json", "third-party/pocketfft",
     "third-party/gflags", "backends/xnnpack/third-party/FXdiv",
     "backends/xnnpack/third-party/cpuinfo", "backends/xnnpack/third-party/pthreadpool",
-    "backends/xnnpack/third-party/FP16", "backends/xnnpack/third-party/XNNPACK",
 ]
+# ExecuTorch uses support libraries under backends/xnnpack even with that delegate
+# disabled. The delegate and its FP16 checkout belong to xrGPU's inference demo.
 
 
 def windows_host_cmake(source):

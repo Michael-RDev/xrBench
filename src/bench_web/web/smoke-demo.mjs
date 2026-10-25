@@ -114,7 +114,7 @@ export function mountSmokeDemo({document, onChange, onRetry, canEnter}) {
   const trigger = document.getElementById('demo-trigger'), mount = document.getElementById('demo-mount');
   trigger.innerHTML = '<button id="demo-toggle" class="text-action demo-toggle" type="button" aria-expanded="false" aria-controls="demo-panel">Try a demo</button>';
   mount.innerHTML = `<section id="demo-panel" class="demo-panel" aria-label="Device demo" hidden>
-    <div class="demo-heading"><span class="demo-tag">SIMULATION</span><button id="demo-exit" class="text-action" type="button">Exit demo <span aria-hidden="true">×</span></button></div>
+    <div class="demo-heading"><span class="demo-tag">Simulation</span><button id="demo-exit" class="text-action" type="button">Exit demo <span aria-hidden="true">×</span></button></div>
     <label for="demo-device">Choose a device to explore</label>
     <select id="demo-device"><option value="">Choose device…</option></select>
     <p id="demo-support" class="demo-support"></p>

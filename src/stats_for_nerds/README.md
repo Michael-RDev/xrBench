@@ -1,7 +1,11 @@
 # Stats for Nerds
 
-The buildless, dependency-free dashboard at `/stats/` uses xrBench’s light ivory,
-graphite and sage palette. It combines device controls, live counters, exclusive
+The buildless, dependency-free dashboard at `/stats/` shares the homepage’s ivory,
+graphite and sage palette and sans-serif interface type. Benchmark, execution and
+kernel settings stay visible in separate groups, alongside the live session on
+desktop. Tables use tabular figures, while case identifiers and raw evidence retain
+monospace type. Case timing remains visible on phones; wide evidence tables scroll
+within their own regions. It combines device controls, live counters, exclusive
 session stages, slowest correctness observations, estimated efficiency, and
 searchable expandable operation evidence. History and comparisons start collapsed.
 `#benchmark`, `#layers`, and `#runs` scroll to sections; `?run=<id>` carries a saved

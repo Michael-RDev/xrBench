@@ -20,8 +20,8 @@ def test_session_origin_host_and_path_boundaries():
         with request("/api/session") as r:assert json.load(r)["token"]=="test-session"
         with request("/") as r:assert b"Run GPU benchmark" in r.read()
         for path, marker in (
-            ("/stats/", b"stats for nerds"),
-            ("/stats", b"stats for nerds"),
+            ("/stats/", b"Stats for Nerds"),
+            ("/stats", b"Stats for Nerds"),
             ("/bench/app.js", b"/shared/session.mjs"),
             ("/bench/style.css", b".device-panel"),
             ("/bench/device-view.mjs", b"deviceView"),

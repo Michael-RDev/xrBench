@@ -82,12 +82,38 @@ function renderDevice(){
   document.querySelector('.device-panel').dataset.state=view.kind;
 }
 function renderCatalog(){
-  if(!catalog)return;const list=$('device-catalog');list.replaceChildren();
-  for(const chip of catalog.chips){const item=document.createElement('li'),name=document.createElement('strong'),detail=document.createElement('span');
-    name.textContent=chip.name;detail.textContent=chip.execution==='android_probe_required'?'Android native CPU / GPU · capability check required':chip.execution==='planned_metal'?'Apple Metal runner · planned':'Specialized processor · compute runner unavailable';
-    const models=catalog.devices.filter(d=>d.chips.some(c=>c.chip_id===chip.id)||d.primary_chip_options?.includes(chip.id)).map(d=>d.name);
-    if(models.length)detail.textContent+=' · '+models.join(', ');
-    item.append(name,detail);list.append(item);
+  if(!catalog)return;const container=$('device-catalog');container.replaceChildren();
+  const chips=new Map(catalog.chips.map(chip=>[chip.id,chip]));
+  const groups=[
+    {id:'check',title:'Check on device',note:'Android devices with a native runner. GPU compatibility is checked when you run.',devices:[]},
+    {id:'planned',title:'Planned',note:'These devices cannot run the benchmark yet.',devices:[]},
+    {id:'unavailable',title:'Unavailable',note:'No compute runner is available for these devices.',devices:[]},
+    {id:'unknown',title:'Needs verification',note:'Processor support is not confirmed for these devices.',devices:[]},
+  ];
+  for(const device of catalog.devices){
+    const primary=device.chips.filter(chip=>chip.role==='primary');
+    const ids=[...new Set([...primary.map(chip=>chip.chip_id).filter(Boolean),...(device.primary_chip_options||[])])];
+    const processors=ids.map(id=>chips.get(id));
+    // Classify only the processor that executes the benchmark, not spatial coprocessors.
+    const execution=processors.length&&processors.every(chip=>chip?.execution==='android_probe_required')?'check':
+      processors.length&&processors.every(chip=>chip?.execution==='planned_metal')?'planned':
+      processors.length&&processors.every(chip=>['sdk_access_unverified','no_general_compute_runner'].includes(chip?.execution))?'unavailable':'unknown';
+    groups.find(group=>group.id===execution).devices.push({device,primary,processors});
+  }
+  for(const group of groups){
+    if(!group.devices.length)continue;
+    const section=document.createElement('section'),heading=document.createElement('h3'),note=document.createElement('p'),list=document.createElement('ul');
+    section.className='compatibility-group';section.dataset.support=group.id;
+    heading.id=`compatibility-${group.id}`;heading.textContent=group.title;section.setAttribute('aria-labelledby',heading.id);
+    note.textContent=group.note;
+    for(const {device,primary,processors} of group.devices){
+      const item=document.createElement('li'),name=document.createElement('strong'),detail=document.createElement('span');
+      name.textContent=device.name;
+      detail.textContent=processors.map(chip=>chip?.name||'Processor not identified').join(' or ')||'Processor not identified';
+      if(primary.some(chip=>chip.location==='compute_puck'))detail.textContent+=' in the compute puck; the glasses are not benchmarked.';
+      item.append(name,detail);list.append(item);
+    }
+    section.append(heading,note,list);container.append(section);
   }
 }
 function presentChip(source='native'){
@@ -190,7 +216,9 @@ async function poll(){
   try{
     if(!token)token=(await api('/api/session')).token;
     const next=await api('/api/status');if(generation!==mutation)return;status=next;
-    if(!catalog){try{catalog=await api('/api/device-catalog');renderCatalog();}catch{/* Detection and controls still work without the catalog panel. */}}
+    if(!catalog){try{catalog=await api('/api/device-catalog');renderCatalog();}catch{
+      const message=document.createElement('p');message.textContent='Device compatibility is unavailable. Retrying automatically…';$('device-catalog').replaceChildren(message);
+    }}
     if(!selectedSession&&status.benchmark_sessions?.length){
       const matching=status.benchmark_sessions.find(s=>s.phases.some(p=>p.run_id===selected));
       if(matching)selectedSession=matching.session_id;

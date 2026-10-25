@@ -117,8 +117,12 @@ def build(jobs=4, web=False):
     for name in ["manifest.json", *manifest["files"]]:
         shutil.copy2(bundle / name, assets / name)
     save(build_dir / "assets/kernel-manifest.json", kernel_manifest)
-    shutil.copytree(ROOT / "licenses", build_dir / "assets/licenses", dirs_exist_ok=True)
-    shutil.copy2(package / "LICENSE", build_dir / "assets/licenses/xrgpu-benchmark-LICENSE.txt")
+    # Refresh generated notices so removed source files cannot linger in the APK.
+    license_assets = build_dir / "assets/licenses"
+    if license_assets.exists():
+        shutil.rmtree(license_assets)
+    shutil.copytree(ROOT / "licenses", license_assets)
+    shutil.copy2(package / "LICENSE", license_assets / "xrgpu-benchmark-LICENSE.txt")
     shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", build_dir / "assets")
     STATE.mkdir(exist_ok=True)
     key = STATE / "debug.keystore"

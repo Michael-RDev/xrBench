@@ -53,10 +53,10 @@ export function renderChip(document,data,source='native'){
   const $=id=>document.getElementById(id);$('chip-dashboard').hidden=!data;$('chip-details').hidden=!data;if(!data)return;
   const simulated=source==='simulated';
   $('chip-dashboard').dataset.source=source;
-  $('chip-source-title').textContent=simulated?'BENCHMARK PREVIEW':'ON-DEVICE COMPUTE';
-  document.querySelector('.chip-live').textContent=simulated?'SIMULATED':'NATIVE';
-  document.querySelector('.chip-now .micro-label').textContent=data.active?'NOW RUNNING':data.stale?'DEVICE STATUS':'RUN STATUS';
-  document.querySelector('.chip-history .micro-label').textContent=simulated?'SAMPLE RESULTS':'RECENT RESULTS';
+  $('chip-source-title').textContent=simulated?'Benchmark preview':'On-device compute';
+  document.querySelector('.chip-live').textContent=simulated?'Simulated':'Native';
+  document.querySelector('.chip-now .micro-label').textContent=data.active?'Now running':data.stale?'Device status':'Run status';
+  document.querySelector('.chip-history .micro-label').textContent=simulated?'Sample results':'Recent results';
   document.querySelector('.chip-evidence summary').textContent=simulated?'Simulated case status details':'Case status details';
   $('chip-gauge').setAttribute('aria-label',simulated?'Simulated suite completed':'Suite completed');
   $('chip-dashboard').dataset.processor=data.processor;
