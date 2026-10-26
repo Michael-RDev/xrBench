@@ -1,0 +1,24 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'org.xrbench.qualification'
+    compileSdk 35
+    buildToolsVersion '35.0.0'
+    defaultConfig {
+        applicationId 'org.xrbench.qualification'
+        minSdk 29
+        targetSdk 32
+        versionCode 1
+        versionName '0.1.0'
+        ndk { abiFilters 'arm64-v8a' }
+    }
+    sourceSets.main.jniLibs.srcDirs = [rootProject.file(findProperty('xrbenchNativeRoot') ?: '../.build/qualification/lib')]
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    packaging { jniLibs { useLegacyPackaging = true } }
+    // This locally sideloaded Quest maintainer tool retains the project's
+    // tested target SDK. Google Play submission policy does not apply to it.
+    lint { disable 'ExpiredTargetSdkVersion' }
+}

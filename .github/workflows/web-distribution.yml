@@ -33,6 +33,7 @@ jobs:
           uv sync --locked --extra export --group dev
       - name: Fetch pinned xrGPU kernels
         env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
           XRGPU_READ_TOKEN: ${{ secrets.XRGPU_READ_TOKEN }}
         run: uv run python -m engine.kernel_package fetch
       - name: Browser and backend regression tests

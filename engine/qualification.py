@@ -293,6 +293,12 @@ def collect(args):
 
 
 def main():
+    # Keep the original matmul CLI and saved reports compatible. The compiled
+    # inference-package protocol has its own versioned campaign namespace.
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "campaign":
+        from engine.qualification_campaign import main as campaign_main
+        return campaign_main(sys.argv[2:])
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run", help="Run one hardware stage on a locally connected device")

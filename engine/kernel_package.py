@@ -20,6 +20,7 @@ PINS = ROOT / "dependencies.json"
 CACHE = ROOT / "artifacts/deps/xrgpu"
 PACKAGE_ID = "xrgpu.benchmark-kernels.v1"
 REPOSITORY = "https://github.com/Michael-RDev/xrGPU.git"
+HUB_REPOSITORY = "https://huggingface.co/kernels/xrML/xrGPU-kernels"
 REQUIRED = frozenset({
     "matmul/config.json", "matmul/xrbench_matmul_scalar.glsl",
     "matmul/xrbench_matmul_scalar.yaml", "matmul/xrbench_matmul_vec.glsl",
@@ -43,14 +44,18 @@ def relative_path(value):
     return PurePosixPath(value)
 
 
-def specification():
-    pins = json.loads(PINS.read_text(encoding="utf-8"))
-    spec = pins.get("xrgpu", {})
-    if (spec.get("url") != REPOSITORY or spec.get("package_id") != PACKAGE_ID
+def validate_specification(spec):
+    if (not isinstance(spec, dict) or spec.get("url") not in {REPOSITORY, HUB_REPOSITORY} or spec.get("package_id") != PACKAGE_ID
             or not re.fullmatch(r"[0-9a-f]{40}", spec.get("commit", ""))
             or not re.fullmatch(r"[0-9a-f]{64}", spec.get("content_sha256", ""))):
         raise ValueError("Invalid pinned xrGPU kernel dependency")
     relative_path(spec.get("package_path"))
+    return spec
+
+
+def specification():
+    pins = json.loads(PINS.read_text(encoding="utf-8"))
+    spec = validate_specification(pins.get("xrgpu", {}))
     return spec, pins["executorch"]["commit"]
 
 
@@ -142,9 +147,39 @@ def git(*args, cwd, env=None):
     return result.stdout.strip()
 
 
-def resolve(*, fetch=False):
-    spec, runtime = specification()
-    checkout = CACHE / spec["commit"]
+def hub_fetch(spec, destination):
+    """Invoke the locked SDK only during an explicit download, never startup."""
+    uv = shutil.which("uv")
+    if not uv:
+        raise RuntimeError("uv is required to fetch xrML kernels; cached packages work offline")
+    command = [uv, "run", "--locked", "--script", str(ROOT / "tools/hf_transport.py"),
+               "--env-file", str(ROOT / ".env"), "fetch", "--repo-id", "xrML/xrGPU-kernels",
+               "--revision", spec["commit"], "--package-path", spec["package_path"],
+               "--manifest-sha256", spec["content_sha256"], "--output", str(destination)]
+    try:
+        result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.TimeoutExpired):
+        raise RuntimeError("Could not run the isolated xrML Hub downloader") from None
+    if result.returncode:
+        raise RuntimeError("Cannot retrieve the pinned xrML kernels. Check network access, the immutable "
+                           "Hub revision, and HF_TOKEN/HF_token permissions. Downloader diagnostics are redacted.")
+
+
+def resolve(*, fetch=False, spec=None, runtime_revision=None):
+    if spec is None:
+        spec, runtime = specification()
+    else:
+        validate_specification(spec)
+        runtime = runtime_revision
+        if not re.fullmatch(r"[0-9a-f]{40}", runtime or ""):
+            raise ValueError("A pinned runtime revision is required")
+    cache = CACHE
+    if spec["url"] == HUB_REPOSITORY:
+        cache = cache / ("hf-" + hashlib.sha256(spec["url"].encode()).hexdigest()[:16])
+    for directory in {CACHE, cache}:
+        if directory.is_symlink() or (hasattr(directory, "is_junction") and directory.is_junction()):
+            raise ValueError("xrGPU dependency cache must not be a link")
+    checkout = cache / spec["commit"]
     package = checkout / spec["package_path"]
     if checkout.exists():
         if checkout.is_symlink() or (hasattr(checkout, "is_junction") and checkout.is_junction()):
@@ -154,28 +189,33 @@ def resolve(*, fetch=False):
         return verify(package, spec, runtime)
     if not fetch:
         raise FileNotFoundError("Pinned xrGPU kernels are not cached. Run python -m engine.kernel_package fetch.")
-    CACHE.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=".fetch-", dir=CACHE))
+    cache.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=".fetch-", dir=cache))
     try:
-        env = git_environment()
-        git("init", "--quiet", cwd=staging, env=env)
-        git("fetch", "--quiet", "--depth", "1", spec["url"], spec["commit"], cwd=staging, env=env)
-        if git("rev-parse", "FETCH_HEAD", cwd=staging, env=env) != spec["commit"]:
-            raise ValueError("Fetched xrGPU commit does not match the dependency pin")
-        git("checkout", "--quiet", "--detach", "FETCH_HEAD", cwd=staging, env=env)
+        if spec["url"] == HUB_REPOSITORY:
+            destination = staging / spec["package_path"]
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            hub_fetch(spec, destination)
+        else:
+            env = git_environment()
+            git("init", "--quiet", cwd=staging, env=env)
+            git("fetch", "--quiet", "--depth", "1", spec["url"], spec["commit"], cwd=staging, env=env)
+            if git("rev-parse", "FETCH_HEAD", cwd=staging, env=env) != spec["commit"]:
+                raise ValueError("Fetched xrGPU commit does not match the dependency pin")
+            git("checkout", "--quiet", "--detach", "FETCH_HEAD", cwd=staging, env=env)
         contained_file(staging, spec["package_path"] + "/manifest.json")
         verify(staging / spec["package_path"], spec, runtime)
         try:
             staging.rename(checkout)
         except FileExistsError:
             # Another build may have fetched the same immutable package.
-            return resolve()
+            return resolve(spec=spec, runtime_revision=runtime)
         return package
     finally:
         if staging.exists():
             # Staging is created directly inside CACHE and never user-selected.
             # Git objects can be read-only on Windows.
-            if staging.is_symlink() or not staging.resolve().is_relative_to(CACHE.resolve()):
+            if staging.is_symlink() or not staging.resolve().is_relative_to(cache.resolve()):
                 raise ValueError("Refusing to remove an xrGPU staging path outside the dependency cache")
             def writable(function, path, _):
                 os.chmod(path, 0o700)
@@ -183,11 +223,39 @@ def resolve(*, fetch=False):
             shutil.rmtree(staging, onerror=writable)
 
 
+def pin_hub(revision, manifest_sha256):
+    """Promote only a real downloaded and verified Hub release to the build pin."""
+    original = PINS.read_bytes()
+    pins = json.loads(original)
+    spec = dict(url=HUB_REPOSITORY, commit=revision, package_id=PACKAGE_ID,
+                package_path="kernels/benchmark", content_sha256=manifest_sha256)
+    validate_specification(spec)
+    resolve(fetch=True, spec=spec, runtime_revision=pins["executorch"]["commit"])
+    if PINS.read_bytes() != original:
+        raise RuntimeError("Dependencies changed during verification; retry pinning the release")
+    pins["xrgpu"] = spec
+    handle, temporary = tempfile.mkstemp(prefix=".dependencies-", dir=PINS.parent)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            json.dump(pins, stream, indent=2)
+            stream.write("\n")
+        os.replace(temporary, PINS)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    return spec
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("fetch", "verify"))
+    parser.add_argument("command", choices=("fetch", "verify", "pin"))
+    parser.add_argument("--revision")
+    parser.add_argument("--manifest-sha256")
     args = parser.parse_args()
     try:
+        if args.command == "pin":
+            if not args.revision or not args.manifest_sha256:
+                parser.error("pin requires --revision and --manifest-sha256 from a published release")
+            pin_hub(args.revision, args.manifest_sha256)
         directory = resolve(fetch=args.command == "fetch")
     except (ValueError, OSError, RuntimeError) as error:
         parser.exit(1, str(error) + "\n")

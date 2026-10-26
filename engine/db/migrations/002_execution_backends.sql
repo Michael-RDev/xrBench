@@ -1,5 +1,3 @@
--- Backends are checked by the runner/report registry. Keep storage extensible.
--- Apply after 001_initial.sql; this file is safe to rerun on existing volumes.
 BEGIN;
 SELECT pg_advisory_xact_lock(871624931);
 SET LOCAL search_path TO xrgpu_benchmarks;

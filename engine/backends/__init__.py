@@ -2,12 +2,15 @@
 
 from .vulkan import VulkanBackend
 from .cpu import CPUBackend
+from .operators import OperatorBackend
 
 BACKENDS = {b.id: b for b in (VulkanBackend(), VulkanBackend(resident=True), CPUBackend(), CPUBackend(resident=True))}
 TARGETS = ("unknown", "headset", "glasses", "phone", "compute_puck")
 
 
 def get_backend(name="executorch_vulkan"):
+    if name == "xrgpu_vulkan":
+        return OperatorBackend()
     try:
         return BACKENDS[name]
     except (KeyError, TypeError):

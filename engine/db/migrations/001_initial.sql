@@ -1,5 +1,3 @@
--- Run manually with psql -v ON_ERROR_STOP=1 -f /migrations/001_initial.sql.
--- Each file owns its transaction and version record; rerunning it preserves data.
 BEGIN;
 SELECT pg_advisory_xact_lock(871624931);
 CREATE SCHEMA IF NOT EXISTS xrgpu_benchmarks;

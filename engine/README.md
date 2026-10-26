@@ -1,128 +1,188 @@
-# Maintainer and developer startup
+# Development guide
 
-CPU/GPU benchmark kernels and calibration shaders are owned by xrGPU. Builds
-fetch its verified commit from `dependencies.json`; the local source cache is an
-ignored dependency. See [kernel development](../docs/kernel-development.md) for
-read credentials, offline caching, provenance, and updating the pin.
+[Documentation](../docs/README.md) · [Browser releases](../src/bench_web/README.md) · [Measurements](MEASUREMENTS.md)
 
-Visitors use the hosted website: connect an authorized headset by USB and press
-Run. They do not run these commands or install a local database.
+Run commands from the repository root.
 
-`uv run python main.py` previews the packaged browser website on port 8765 and
-saves reports locally without Docker or PostgreSQL. The remaining instructions
-are for the separate development application and Stats for Nerds.
+- [Setup](#start-the-app)
+- [Native build](#build-the-native-app)
+- [Dashboard](#stats-for-nerds)
+- [Workloads and kernels](#edit-workloads-and-kernels)
+- [Reports and API](#api-and-storage)
+- [Tests](#tests)
 
-From the repository root, run:
+## Start the app
+
+Install Python 3.11–3.13, uv, and Docker with its CLI. On Linux, start Docker first.
 
 ```sh
+uv sync --locked --group dev
 uv run python main.py --developer
 ```
 
-This opens Docker Desktop when needed on macOS/Windows, waits for Docker,
-starts the PostgreSQL container, applies pending SQL migrations, and opens the
-website at [localhost:8766](http://localhost:8766/). Docker Desktop and its CLI must
-be installed first. Linux requires an already-running Docker engine; the launcher
-does not request root privileges or install system services.
+This starts PostgreSQL, applies migrations, and opens [localhost:8766](http://localhost:8766/).
+The launcher starts Docker Desktop on macOS/Windows when needed.
+Keep `engine/.env`; existing database credentials must be restored if lost.
 
-For a fresh local database, the launcher generates an ignored `engine/.env` with
-a random password and restricted file permissions. Existing credentials and the
-named database volume are reused. If that volume exists but its credentials have
-been lost, restore them; the launcher never resets the database to make it start.
-Each SQL file skips versions already applied, so subsequent launches keep saved
-reports. Startup stops with a concise error if Docker, the connection, or SQL fails.
+| Option | Use |
+| --- | --- |
+| `--no-open` | Start without opening a browser |
+| `--port 9000` | Change the app port |
+| `--adb /path/to/adb` | Select platform-tools |
+| `XRGPU_DB_PORT` in `engine/.env` | Change PostgreSQL's default port, 5432 |
+| `--no-docker` | Use a running database and apply migrations |
+| `XRGPU_DATABASE_URL` | Use an external database; skip Docker and local credential creation |
 
-`--no-open` suppresses browser opening, `--port 9000` changes the website port,
-and `--adb /path/to/adb` selects platform-tools. Set `XRGPU_DB_PORT` in `engine/.env`
-to change the database port. `--no-docker` uses an already-running database while
-still applying SQL. `XRGPU_DATABASE_URL` also bypasses Docker and local credential
-creation; pending migrations are applied to that configured database.
+### Manual database setup
 
-Docker readiness is bounded to about 120 seconds after opening Desktop. Container
-startup has a 180-second limit, including a 60-second health wait. Database connection
-readiness is bounded to about 30 seconds. SQL has a 15-second lock timeout and a
-120-second statement timeout. Ctrl-C cancels startup or stops the Python server;
-PostgreSQL stays running with its data intact.
-
-## Manual alternative
-
-The database container, SQL files, and server can still be run separately using
-the commands below. The module entry point `python -m src --developer` starts only
-the server; automatic setup belongs to `main.py --developer`.
-
-## 1. Configure and start PostgreSQL yourself
-
-For a new installation, copy `.env.example` from this directory to `engine/.env`
-and replace the password placeholder. If `engine/.env` already exists, keep it:
-an existing database volume still uses its original password. Choose a different
-`XRGPU_DB_PORT` if 5432 is occupied. Keep this file private; it is ignored by Git.
-
-Open Docker Desktop, then explicitly start the database container:
+For a new database, copy `engine/.env.example` to `engine/.env` and set a password.
+Keep existing credentials. With Docker running:
 
 ```sh
 docker compose --env-file engine/.env -f engine/compose.yaml up -d --wait db
-```
-
-PostgreSQL listens on `127.0.0.1` only. The Compose project remains
-`xrgpu-benchmarks` and reuses `xrgpu-benchmarks_benchmark-postgres`, preserving
-existing reports. Container restart is disabled: start it yourself when needed.
-The `up` command also applies the new restart policy and read-only SQL mount to
-an existing container. Docker initializes the database/user on a new volume;
-benchmark tables are created only by the next, manual step.
-
-## 2. Apply the SQL yourself
-
-Run both files in order. Each file includes its transaction, schema search path,
-and migration-version record. Rerunning the files skips versions already applied;
-existing benchmark rows are retained. No scripts are mounted into PostgreSQL's
-automatic initialization directory.
-
-```sh
 docker compose --env-file engine/.env -f engine/compose.yaml exec -T db psql -U xrgpu -d xrgpu -v ON_ERROR_STOP=1 -f /migrations/001_initial.sql
 docker compose --env-file engine/.env -f engine/compose.yaml exec -T db psql -U xrgpu -d xrgpu -v ON_ERROR_STOP=1 -f /migrations/002_execution_backends.sql
-```
-
-You can instead open the SQL files in `engine/db/migrations/` and execute them in
-your SQL client connected to the `xrgpu` database. Apply future migration files
-explicitly in numeric order too. The schema needs this setup once, then whenever
-a new migration is added, rather than on each server start.
-
-## 3. Start the server yourself
-
-With the repository environment installed (`uv sync --locked --group dev`):
-
-```sh
 uv run python -m src --developer
 ```
 
-Open [the developer homepage](http://localhost:8766/) or
-[Stats for Nerds](http://localhost:8766/stats/). The browser opens automatically;
-add `--no-open` to suppress it. `--port` selects another port and
-`--adb /path/to/adb` selects platform-tools. The module entry points
-`uv run python -m src --developer` and `uv run python -m engine --port 8766`
-remain available.
-In this manual mode, missing database setup stops startup with instructions. The
-server does not apply SQL. The old `--migrate-only` option is removed; use `main.py --developer`
-for automatic setup or execute the SQL files yourself.
+Apply later migrations in numeric order. Direct server commands require a ready database.
 
-To use an existing PostgreSQL server, set `XRGPU_DATABASE_URL`, manually apply the
-same SQL there, and start the Python server. SQL setup needs schema/table creation
-permissions. Runtime needs access to the existing schema and report tables.
+### Stop
 
-## Stop each process yourself
-
-Ctrl-C stops the Python server. Stop PostgreSQL separately when finished:
+Ctrl-C stops the server. To stop PostgreSQL while keeping its data:
 
 ```sh
 docker compose --env-file engine/.env -f engine/compose.yaml stop db
 ```
 
-Stopping preserves the named volume. Avoid `down -v` unless you intend to delete
-the collected database.
+`down -v` deletes the database volume. See [browser preview](../src/bench_web/README.md#serve-and-preview)
+for the packaged site on port 8765.
 
-## Browser preview and local report capture
+## Build the native app
 
-`uv run python -m src --no-open` serves a previously packaged browser/WebUSB
-release on port 8765. It saves submitted JSON to
-`engine/.state/submitted-reports/` and does not use PostgreSQL. The manual database
-steps above govern the developer engine and Stats for Nerds, not this file receiver.
-See [browser packaging and report delivery](../src/bench_web/README.md).
+You need JDK 17+ and ADB. Windows also needs Visual Studio 2022's Desktop development
+with C++ workload. The commands below prepare the pinned Android/native tools.
+
+### Prepare the kernel package
+
+Give your Git credential helper read access to private xrGPU, or set `XRGPU_READ_TOKEN`.
+Keep credentials out of URLs and build artifacts.
+
+```sh
+uv run python -m engine.kernel_package fetch
+uv run python -m engine.kernel_package verify
+```
+
+`dependencies.json` pins the commit and digest. Edit xrGPU itself, not its verified
+cache at `artifacts/deps/xrgpu/<commit>/`.
+
+### Compile the APK
+
+```sh
+uv sync --extra export --group dev
+uv run --extra export --group dev python -m engine.bootstrap_android
+uv run --extra export --group dev python -m engine.prepare
+uv run --extra export --group dev python -m engine.bootstrap_shaderc
+uv run --extra export --group dev python -m layers.export
+uv run --extra export --group dev python -m engine.build
+```
+
+Keep `engine/.build/xrgpu-benchmarks.apk` and `engine/.build/apk.json` matched.
+**Run** installs this developer APK (`org.xrgpu.benchmarks`); hosted releases need
+[separate signing](../src/bench_web/README.md#build-and-sign-maintainers-only).
+Keep `engine/.state/debug.keystore` when moving the checkout.
+
+### Connect and run
+
+Enable developer mode and USB debugging, connect a data cable, approve debugging,
+and select **Run**. Keep the runner visible. Use `--adb /path/to/adb` if discovery
+fails; restart after changing it. See [device requirements](../docs/workflows/device-onboarding.md).
+
+After a disconnect, recover the existing run. **Stop** waits for submitted work;
+disconnected cancellation takes effect after reconnection.
+
+## Stats for Nerds
+
+Open `/stats/`, inspect capabilities, choose a backend/suite and preset, then
+**Run benchmark**. Operation filters accept patterns such as `linear, conv*`;
+every pattern must match. XR frame tests require wearing Quest 3.
+
+**Continuous mode** runs once per build/configuration. Closing the page leaves
+active work running; **Stop** disables continuous mode and cancels work. Failed
+attempts don't auto-retry. **Download diagnostics** saves measurements without
+USB serials, tokens, lease owners, cache identities, or host paths.
+
+## Edit workloads and kernels
+
+Standard has 63 cases; Development has 80. Both ship in the APK.
+Edit `layers/<operation>/layer.py` and [`layers/catalog.json`](../layers/catalog.json).
+Supply a PyTorch `module`, NumPy `reference`, and any `make_weights`/`prepare_inputs`.
+Use `rand` for deterministic inputs; references compute in float64, then round to FP32.
+Re-export and rebuild after layer changes.
+
+Edit native kernels in xrGPU's `kernels/benchmark/`: `matmul/`, `cpu/matmul.h`,
+`resident/`, or `calibration/`. Stock sources allow only declared tracing/selection hooks.
+
+### Kernel experiments
+
+After building the toolchain and exports:
+
+```sh
+uv run python -c 'from engine.prepare import install_kernel_hooks, verify; install_kernel_hooks(); verify()'
+uv run --extra export --group dev python -m engine.build
+```
+
+1. In Stats for Nerds, run stock matmul, then **Stock vs stock · noise check** with
+   **Standard** and **Dispatch trace**.
+2. Run **Stock vs candidate · matmul**. Check correctness, dispatches, shader hashes,
+   and build identity. Standard uses ten balanced randomized pairs; Smoke uses six.
+3. Repeat noise and candidate runs with **Latency · GPU timestamps off**.
+
+Keep all planned pairs. Wrong outputs, missing pairs, interruptions, changed
+conditions, or wrong shader selection invalidate performance claims.
+
+### Update and rebuild
+
+Commit kernel changes and manifest checksums in xrGPU. Update the full commit and
+content digest in `dependencies.json`, then fetch and rebuild. The digest is SHA-256
+of sorted-key, compact UTF-8 manifest JSON without a trailing newline.
+Shader-only changes don't need new workload exports.
+
+### Compare and interpret
+
+Compare `execution_ms` within matching [timing scopes](MEASUREMENTS.md).
+Analysis uses 2,000 pair-bootstrap draws for an exploratory 95% interval.
+**Improvement observed** requires at least 5% mean improvement and an interval above zero.
+Check p95, thermal effects, repeated tuning, and multiple comparisons. Reproduce
+improvement in three distinct sessions, then in the application.
+Use the controls and reports in [hardware qualification](../docs/workflows/device-onboarding.md#qualify-hardware).
+
+## API and storage
+
+Local originals are saved as `engine/.state/runs/<run-id>/native-report.json` before
+PostgreSQL submission. Database failures queue retries without rerunning workloads;
+downloads still work. Reports exclude USB serials, account/email data, camera images,
+and pose traces. Hosted uploads use the [browser receiver](../src/bench_web/README.md#automatic-report-delivery).
+
+To inspect an original report without a device or database:
+
+```sh
+uv run python -m engine.evidence returned-report.json --output analysis.json
+```
+
+For API contracts, see [server routes](server.py), [session recovery](benchmark_sessions.py),
+and [watch scheduling](watch.py). Routes require session/origin checks.
+
+## Tests
+
+```sh
+npm test
+uv run --extra export --group dev python -m pytest engine/tests src/stats_for_nerds/tests -q
+uv run --extra export --group dev python -m engine.verify_cpu
+```
+
+For database tests, set `XRGPU_TEST_POSTGRES=1`, then run
+`uv run --extra export --group dev python -m pytest engine/tests/test_postgres.py -q`.
+This needs a running database and permission to create/drop a temporary database.
+`XRGPU_TEST_POSTGRES_RESTART=1` also restarts the container, interrupting access.
+Keep synthetic UI fixtures out of the database and hardware evidence.
