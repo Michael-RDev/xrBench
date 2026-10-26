@@ -24,7 +24,7 @@ export class BrowserController {
   }
   async save(s) {s.updated_at = now(); await this.store.save(s);}
   active() {return this.sessions.find(s => !terminal.has(s.status));}
-  async start(serial, requestId, processor = 'gpu') {
+  async start(serial, requestId, processor = 'gpu', chosenDevice = null) {
     if (!['gpu', 'cpu'].includes(processor)) throw Error('Processor must be gpu or cpu');
     const explicitProcessor = arguments.length >= 3;
     const checkRequest = s => {
@@ -35,8 +35,9 @@ export class BrowserController {
     this.starting = true;
     try {
       // choose() must run synchronously in the click handler, before storage/network I/O.
-      const chosen = this.transport.choose(serial);
+      const chosen = chosenDevice?Promise.resolve(chosenDevice):this.transport.choose(serial);
       const device = await chosen; await this.init();
+      if(!this.manifest.configurations[processor])throw new EvidenceError('This release benchmarks native GPU kernels; CPU fallback is unavailable.');
       if (!device.serial) throw Error('This headset has no stable USB identity and cannot be safely recovered.');
       const existing = this.active();
       if (existing) {checkRequest(existing); if (existing.serial !== device.serial) throw Error('Reconnect the headset with the unfinished run first.'); await this.resume(existing, device); return this.view(existing);}
@@ -54,7 +55,7 @@ export class BrowserController {
         const s = {session_id: uuid('bench-'), request_id: requestId || uuid('request-'), serial: device.serial,
           connection_id: (await sha256(new TextEncoder().encode(device.serial))).slice(0, 24),
           status: 'starting', created_at: now(), current_phase: 0, cancel_requested: false, processor,
-          message: 'Connecting · put on the headset and allow USB debugging…', manifest: structuredClone(this.manifest),
+          message: 'Connecting · approve USB debugging in the headset if prompted…', manifest: structuredClone(this.manifest),
           phases: [processor].map(processor => ({processor, backend: this.manifest.configurations[processor].backend,
             configuration: structuredClone(this.manifest.configurations[processor]), run_id: uuid('run-'), status: 'pending'}))};
         await this.save(s); this.sessions.push(s); this.work(s, device, release); return this.view(s);
@@ -64,6 +65,8 @@ export class BrowserController {
   }
   view(s) {
     const result = structuredClone(s); delete result.serial; delete result.request_id; delete result.manifest;
+    result.runner_outdated=!terminal.has(s.status)&&s.manifest.apk_sha256!==this.manifest.apk_sha256;
+    if(result.runner_outdated)result.message='A newer runner is available. Update runner stops the previous benchmark, keeps its results, and installs the current release.';
     if (result.status === 'disconnected') result.message = connectionMessage({message: result.message});
     return result;
   }
@@ -80,7 +83,7 @@ export class BrowserController {
       if (!this.workers.size && !this.resuming.size && !this.starting) this.sessions = saved;
     }
     const active = this.active();
-    if (active && !this.workers.has(active.session_id) && !this.starting && !this.disposed) {
+    if (active && active.manifest.apk_sha256===this.manifest.apk_sha256 && !this.workers.has(active.session_id) && !this.starting && !this.disposed) {
       const device = devices.find(d => d.serial === active.serial);
       // Older saved sessions have only a message. Honor their busy error too.
       const code = active.connection_error?.code || (active.status === 'disconnected' ? connectionError({message: active.message}).code : null);
@@ -95,7 +98,7 @@ export class BrowserController {
         connection_message: active?.serial === d.serial ? (active.status === 'disconnected' ? connectionMessage({message: active.message}) : active.message) : null})),
       jobs: sessions.flatMap(s => s.phases.flatMap(p => p.run ? [p.run] : [])), benchmark_sessions: sessions,
       catalog: this.manifest.catalog, suite_revision: this.manifest.suite_revision, apk_ready: true,
-      browser_usb: true, usb_supported: this.transport.supported, error: null, report_delivery: this.delivery?.snapshot()};
+      browser_usb: true, usb_supported: this.transport.supported, cpu_supported:!!this.manifest.configurations.cpu, error: null, report_delivery: this.delivery?.snapshot()};
   }
   async syncDelivery() {
     if (!this.delivery || this.disposed) return;
@@ -118,6 +121,7 @@ export class BrowserController {
   }
   async retry(id) {
     const s = this.sessions.find(s => s.session_id === id);
+    if(s&&s.manifest.apk_sha256!==this.manifest.apk_sha256)return this.upgrade(id);
     if (!s || terminal.has(s.status)) throw Error('No unfinished connection to retry. Press Run to start a benchmark.');
     if (this.starting || this.workers.has(id) || this.resuming.has(id)) return this.view(s);
     this.starting = true;
@@ -128,6 +132,47 @@ export class BrowserController {
       await this.resume(s, device); return this.view(s);
     } catch (error) {throw connectionError(error);}
     finally {this.starting = false;}
+  }
+  async upgrade(id,requestId=uuid('request-')){
+    const old=this.sessions.find(s=>s.session_id===id);
+    if(!old||terminal.has(old.status))throw Error('No previous runner connection to update.');
+    if(this.starting||this.workers.has(id)||this.resuming.has(id))throw Error('Wait for the current device connection before updating.');
+    this.starting=true;
+    let device,release;
+    try{
+      // Keep permission selection in the user's Update runner click.
+      const chosen=this.transport.choose(old.serial);await this.init();device=await chosen;
+      validateManifest(old.manifest);
+      if(device.serial!==old.serial)throw Error('Reconnect the headset with the previous run before updating its runner.');
+      release=await this.lock(old.serial);
+      await this.transport.connect(device);
+      const installed=await this.transport.installedHash(old.manifest);
+      const capture=async phase=>{
+        try{
+          const native=await this.transport.read(old.manifest,phase.run_id,'report.json');
+          validateReport(native,phase.configuration,old.manifest.catalog,{partial:true});
+          await this.store.saveReport(phase.run_id,{native,report:summarize(native)});
+          phase.run??={run_id:phase.run_id,configuration:structuredClone(phase.configuration),storage:'browser'};
+          Object.assign(phase.run,{report_available:true,status:native.status});
+          phase.status=native.status;
+        }catch(error){if(!(error instanceof MissingFile))throw error;}
+      };
+      if(installed){
+        for(const phase of old.phases)if(phase.attempted){await capture(phase);}
+        // This package is a validated xrBench helper, never an arbitrary app.
+        // Stop its GPU work before the next release can benchmark; retain all files.
+        if(old.phases.some(p=>p.attempted&&!terminal.has(p.status))){
+          for(const phase of old.phases)if(phase.attempted&&!terminal.has(phase.status))await this.transport.stop(old.manifest,phase.run_id);
+          await this.transport.shell(['am','force-stop',old.manifest.package]);
+          for(const phase of old.phases)if(phase.attempted)await capture(phase);
+        }
+      }
+      old.error='Previous runner retired for an update. Existing reports and application data are preserved.';
+      await this.finish(old,'canceled');
+    }finally{
+      try{await this.transport.close();}finally{release?.();this.starting=false;}
+    }
+    return this.start(device.serial,requestId,'gpu',device);
   }
   async resume(s, device) {
     if (this.workers.has(s.session_id)) return;
@@ -158,7 +203,7 @@ export class BrowserController {
     try {
       if (s.cancel_requested && !s.phases.some(p => p.attempted)) {await this.finish(s, 'canceled'); return;}
       s.connection_state = 'connecting'; delete s.connection_error;
-      s.message = 'Connecting · put on the headset and allow USB debugging…';
+      s.message = 'Connecting · approve USB debugging in the headset if prompted…';
       await this.save(s);
       await this.transport.connect(device, signal);
       const properties = await this.transport.properties(signal), identity = identify(properties, s.manifest.device_catalog);
@@ -230,7 +275,7 @@ export class BrowserController {
         await this.advance(s); return;
       }
       phase.configuration.run_id = phase.run_id;
-      phase.run = {run_id: phase.run_id, status: 'launching', configuration: structuredClone(phase.configuration), created_at: now(), message: 'Opening the native runner', storage: 'browser'};
+      phase.run = {run_id: phase.run_id, status: 'launching', configuration: structuredClone(phase.configuration), created_at: now(), message: 'Starting the native background benchmark', storage: 'browser'};
       phase.attempted = true; phase.status = 'launching'; s.status = 'running';
       // Persist intent BEFORE any device command. An uncertain launch is recovered, never replayed.
       await this.save(s);
@@ -261,7 +306,8 @@ export class BrowserController {
     catch (e) {if (!(e instanceof MissingFile)) throw e;}
     if (!native) {
       if (!running) throw new EvidenceError(stoppedMessage);
-      s.status = 'disconnected'; s.message = 'Waiting for this run’s native report. Wake the headset; this run will not be launched twice.';
+      if(now()-phase.run.created_at>60)throw new EvidenceError('The device did not start its native benchmark. Reconnect USB and try again. This run was not launched twice.');
+      s.status = 'running'; s.message = 'Starting the native benchmark. Keep USB connected; you can take off the headset.';
       await this.save(s); return;
     }
     validateReport(native, phase.configuration, s.manifest.catalog, {partial: true});
@@ -277,7 +323,7 @@ export class BrowserController {
       await this.syncDelivery();
       if (s.cancel_requested || native.status === 'canceled') {
         if (!s.cancel_requested && /activity lifecycle/.test(native.error || '')) {
-          s.error = 'The headset paused the benchmark. Keep it awake with the benchmark app open, then press Run again. Partial results are saved.';
+          s.error = 'This older runner stopped when the headset paused. Update the website release and start a new run. Partial results are saved.';
         }
         await this.finish(s, 'canceled'); return;
       }

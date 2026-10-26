@@ -90,7 +90,7 @@ test('APK download is checked before streaming installation and corrupt bytes ne
     let installed = false; t.installedHash = async () => installed ? m.apk_sha256 : null;
     t.shell = async (args, options) => {calls.push(args); assert.deepEqual(options.data, bytes); installed = true; return {code: 0, stdout: 'Success\n', stderr: ''};};
     if (corrupt) {await assert.rejects(() => t.install(m, 'https://fixture.test/runner/manifest.json', new AbortController().signal, () => {}), /checksum failed/); assert.equal(calls.length, 0);}
-    else {await t.install(m, 'https://fixture.test/runner/manifest.json', new AbortController().signal, () => {}); assert.deepEqual(calls, [['pm', 'install', '-r', '-t', '-S', '3']]);}
+    else {await t.install(m, 'https://fixture.test/runner/manifest.json', new AbortController().signal, () => {}); assert.deepEqual(calls, [['pm', 'install', '-r', '-t', '-d', '-S', '3']]);}
   }
 });
 test('signature conflicts never uninstall an existing app', async () => {
@@ -119,7 +119,8 @@ test('native launch writes atomically and uses the separate package and full act
   await t.launch(m, config);
   assert.match(calls[0].args.at(-1), /test ! -e .*report.json.*\.part.*mv /);
   assert.deepEqual(JSON.parse(new TextDecoder().decode(calls[0].opts.data)), config);
-  assert.equal(calls[2].args[4], 'org.xrgpu.benchmarks.web/org.xrgpu.benchmarks.MainActivity');
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1].args.slice(0,4), ['am','start','-n','org.xrgpu.benchmarks.web/org.xrgpu.benchmarks.MainActivity']);
 });
 
 test('quick shell commands and size-delimited installs can exit before stdin closes', async () => {

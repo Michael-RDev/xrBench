@@ -20,7 +20,7 @@ let python = process.env.XRBENCH_PYTHON;
 if (!python) {try {await access(venv); python = venv;} catch {python = 'python';}}
 const publish = spawnSync(python, ['-m', 'engine.web_distribution', '--output', out,
   ...(process.env.XRBENCH_RUNNER_BUILD ? ['--build', process.env.XRBENCH_RUNNER_BUILD] : [])], {cwd: root, stdio: 'inherit'});
-if (publish.status !== 0) throw Error('Build requires the signed web runner. See src/bench_web/README.md.');
+if (publish.status !== 0) throw Error('The release pipeline must provide a signed, matched native runner before publishing.');
 const bundled = await build({entryPoints: [path.join(root, 'src/bench_web/web/app.js')], outfile: path.join(out, 'bench/app.js'), metafile: true,
   bundle: true, format: 'esm', platform: 'browser', target: ['chrome120', 'edge120'], minify: true, legalComments: 'eof',
   plugins: [{name: 'dashboard-paths', setup(b) {

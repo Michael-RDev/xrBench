@@ -6,7 +6,7 @@ import pytest
 from engine.controller import Controller
 from engine.devices import identify
 from engine.reports import save
-from layers import revision
+from engine.workloads import revision
 
 
 @pytest.fixture

@@ -1,5 +1,96 @@
 # Testing
 
+## Browser USB and native operator runner
+
+The default local launch is `uv run python main.py`. It starts PostgreSQL and
+serves the browser USB website at `http://localhost:8765/`; device commands run
+through browser ADB. The separate developer dashboard is not needed for Run.
+
+The public runner embeds all 315 verified SPIR-V variants and both Android ARM64
+native operator libraries. Its typed suite covers 221 operator identities with
+one independent reference fixture per identity. It preserves optional inputs,
+multiple outputs, logical/storage types, frozen contract identities and shader
+hashes. This does not replace xrGPU's full contract conformance campaign.
+
+Run software regressions with `npm test` and `uv run --group dev python -m pytest
+-q`. With the existing local PostgreSQL running, use
+`XRGPU_TEST_POSTGRES=1 uv run --group dev python -m pytest -q
+engine/tests/test_postgres.py engine/tests/test_native_public.py`. Database tests
+create disposable databases and preserve the application database. After release
+preparation, run `node --experimental-vm-modules scripts/verify-web.mjs dist` to
+exercise the actual bundled website, USB chooser cancellation and report delivery.
+Its synthetic reports are protocol fixtures, never device evidence.
+
+Required software checks:
+
+- A previous signing identity cannot block installation. Same-key upgrades and
+  supported version downgrades preserve app data; no automatic uninstall occurs.
+- Loading a newer site does not replay an unfinished old launch. Update runner
+  captures its checkpoint, stops its helper, and starts a distinct new run.
+- APK, native package, suite, contract, tensor and shader identities must match.
+  Corruption, unsafe paths, CPU fallback and software-runtime reports are rejected.
+- All 221 operators appear in completed reports. Unsupported capabilities retain
+  explicit reasons and do not count as passing performance observations.
+- Preparation, native execution and readback have separate costs. Environment
+  polling, correctness comparisons and report writes stay outside execution timing.
+  Initial input transfer is included in `prepare_ms` by the current xrGPU API;
+  `input_transfer_ms` stays null with an explicit scope rather than an estimate.
+- PostgreSQL commits before acknowledging delivery. Retries are idempotent; changed
+  evidence under the same run ID conflicts. An outage or file-only receipt leaves
+  the exact report queued in IndexedDB.
+- Schema migrations preserve historical schema-2 model reports while accepting
+  schema-3 typed operator results. No xrGPU database reader is implemented.
+
+Physical Quest 3 checks still required:
+
+- Browser USB authorization and old-app/new-app installation on the real headset.
+- Complete 221-operator correctness run while worn, then while unworn/display off.
+  Record display state, thermal state, charging, capability skips and original JSON.
+- Remove the headset during preparation, warmup and timed execution. Confirm the
+  foreground service remains active, with no Activity pause cancellation.
+- Disconnect/reconnect USB, refresh the tab, stop from browser/notification, reach
+  thermal limits, and confirm partial evidence survives without replaying a launch.
+- Verify notification removal, wake-lock release, bounded cancellation and deadline
+  behavior; inspect OS-specific suspension policies on each supported device.
+- Confirm actual PostgreSQL receipt and matching stored native JSON after a real
+  run, including offline delivery retry. Do not substitute synthetic uploads.
+- Keep OpenXR frame measurements as a separate worn/focused test. Unworn isolated
+  kernel execution does not qualify XR frame timing or establish a speedup.
+
+Software Vulkan artifacts under `artifacts/conformance/public-native-*` retain
+setup failures and subsequent numerical checks separately. They cannot establish
+physical GPU support or satisfy these headset gates.
+
+### Recorded software verification — 2026-10-26
+
+- Python regression suite: **434 passed, 13 skipped**. The database and HTTP
+  tests were also run with local sockets enabled.
+- Browser regression suite: **141 passed**; the final controller/receiver subset
+  passed **34 tests**, including recovery from a previous release.
+- PostgreSQL/native HTTP integration: **19 passed, 1 skipped**. Container restart
+  is a separate opt-in; application database contents were preserved.
+- Software Vulkan smoke: **221/221 fixtures passed**, with zero warmups and one
+  timed sample, plus correctness checks before and after. This is numerical smoke
+  coverage, not benchmark performance or full contract parity.
+- Signed Android ARM64 APK built successfully. All **315 embedded SPIR-V** files
+  and runtime/license hashes matched the source package inventory.
+- Actual production bundle verified USB chooser cancellation, same-origin
+  automatic delivery, IndexedDB retention and deployment-prefix handling.
+- Chrome loaded the local site and its Run button reached USB selection. No
+  headset was selected, so physical installation and unworn behavior remain pending.
+
+The source native package is
+`82291e879d9aa5db9c8fb2ae129e7aaebd79deae270815e237e61daec127b605`;
+the typed fixture suite is
+`749085c3487805211214ce910980a35995628b21a6cffe1278443d143cf4dc39`.
+The resolved xrGPU revision is pinned in `dependencies.json`. Local software
+reports are in `artifacts/conformance/public-native-v3/` and subsequent directories;
+the current APK hash and signing identity are in `dist/runner/manifest.json`.
+The final local release summary and successful test logs are preserved in
+`artifacts/conformance/browser-native-release/verification.json` and its directory.
+The v4 software report also passed typed catalog/shader validation and was rejected
+by the production report validator, as required for software-only evidence.
+
 ## Native inference pipeline verification
 
 This records the completed native-pipeline verification from the xrBench/xrGPU

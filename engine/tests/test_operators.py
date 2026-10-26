@@ -158,10 +158,10 @@ def test_native_evidence_cannot_claim_cpu_fallback_or_omit_cases(package, tmp_pa
         operators.assemble_report(suite_root, target, **kwargs)
 
 
-def test_cli_backend_is_valid_for_reports_but_hidden_from_legacy_apk():
+def test_native_backend_is_valid_for_reports_but_separate_from_legacy_controller():
     assert get_backend("xrgpu_vulkan").id == "xrgpu_vulkan"
     assert "xrgpu_vulkan" not in BACKENDS
-    with pytest.raises(ValueError, match="engine.operators"):
+    with pytest.raises(ValueError, match="website's native suite"):
         get_backend("xrgpu_vulkan").check_request({}, [])
 
 

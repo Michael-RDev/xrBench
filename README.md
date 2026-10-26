@@ -2,8 +2,10 @@
 
 ![xrBench — Native GPU benchmarking for XR devices.](docs/assets/readme-banner.svg)
 
-xrBench runs 63 GPU tests on XR devices to measure execution time and check
-numerical correctness. The browser controls the native runner and displays results.
+xrBench benchmarks all 221 native xrGPU operator identities on Android ARM64 XR
+devices, using C++ and Vulkan/SPIR-V. The browser connects over USB, installs the
+matched runner, displays typed correctness results, and queues finished reports
+for PostgreSQL.
 
 ## Getting started
 
@@ -13,29 +15,41 @@ Open a packaged xrBench site in desktop Chrome or Edge. Enable developer mode an
 USB debugging on your device, connect a USB data cable, and select **Run**. Approve
 USB access in the browser and debugging inside the headset.
 
-Keep the headset awake with the runner visible. Use **Download results JSON** to
-save a copy; finished reports are also sent to the site's configured receiver.
-See [device requirements](docs/workflows/device-onboarding.md) and [connection help](src/bench_web/README.md#browser-distribution).
+After approving debugging, you can remove the headset. Isolated kernel execution
+uses a foreground service and a bounded partial wake lock. Keep USB connected and
+the browser tab open to receive progress. **Download results JSON** preserves a
+copy; reports also retry automatically until PostgreSQL confirms storage.
+
+Older apps and results are preserved during updates. If an unfinished browser
+session belongs to an older release, select **Update runner**. Close other
+headset tools if they already own the USB interface. No desktop ADB server or
+maintainer commands are required by the website.
 
 ### Develop locally
 
-Install Python 3.11–3.13, uv, and Docker with its CLI, then run:
+Install Python 3.11–3.13, uv, Node.js, JDK 17+, and Docker Desktop. Start locally:
 
 ```sh
 uv sync --locked --group dev
-uv run python main.py --developer
+uv run python main.py
 ```
 
-This starts PostgreSQL and opens [localhost:8766](http://localhost:8766/).
-To run workloads, also prepare ADB and the [native runner](engine/README.md).
-Building requires read access to [xrGPU](docs/kernel-development.md).
+This starts PostgreSQL, prepares the signed runner and website when their sources
+change, and opens [localhost:8765](http://localhost:8765/). Preparation uses the
+verified sibling xrGPU native package when available, otherwise builds the pinned
+xrGPU revision. The first build needs network access and read access to xrGPU.
+The local signing key stays private in `engine/.state/browser-signing/`; keep it
+to retain the same installation identity. Cached releases run without source downloads.
+
+The separate developer dashboard remains available with `--developer` on port
+8766. It is independent of the browser USB flow.
 
 ## Project structure
 
 ```text
 src/       Browser interfaces
 engine/    Native runner, device control, and reports
-layers/    Workloads and correctness references
+engine/workloads/  Historical model fixtures and CPU correctness references
 server/    Report receiver
 scripts/   Packaging and verification
 docs/      Guides and workflows
@@ -45,3 +59,10 @@ docs/      Guides and workflows
 
 [Browse the guides](docs/) for development, browser releases, measurements,
 and device qualification.
+
+The public suite uses one fixture per operator, including typed and multiple
+outputs; it is not the complete 13,919-case contract conformance suite. Unsupported
+capabilities remain explicit. Quest 3 USB update, unworn correctness, and sustained
+performance validation are pending physical-device evidence. Existing OpenXR frame
+measurements still require a worn, focused headset. xrGPU database pulling is not
+implemented. See [testing.md](testing.md) for validation gates.

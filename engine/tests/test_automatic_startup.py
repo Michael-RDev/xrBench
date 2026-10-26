@@ -67,9 +67,9 @@ def test_root_command_runs_everything_in_order_and_keeps_options(setup, monkeypa
 
 
 def test_default_launch_opens_public_site_without_developer_services(monkeypatch):
-    from engine import static_site
+    from engine import public_server
     calls = []
-    monkeypatch.setattr(static_site, 'main', lambda: calls.append('browser'))
+    monkeypatch.setattr(public_server, 'main', lambda: calls.append('browser'))
     monkeypatch.setattr(startup, 'prepare_database', lambda **kw: pytest.fail('Developer setup started'))
     monkeypatch.setattr('sys.argv', ['main.py', '--no-open'])
     runpy.run_path(str(ROOT / 'main.py'), run_name='__main__')

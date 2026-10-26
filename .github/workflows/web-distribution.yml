@@ -31,11 +31,6 @@ jobs:
         run: |
           npm ci
           uv sync --locked --extra export --group dev
-      - name: Fetch pinned xrGPU kernels
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          XRGPU_READ_TOKEN: ${{ secrets.XRGPU_READ_TOKEN }}
-        run: uv run python -m engine.kernel_package fetch
       - name: Browser and backend regression tests
         run: |
           npm test
@@ -43,14 +38,11 @@ jobs:
       - name: Prepare Android and native dependencies
         run: |
           uv run --extra export --group dev python -m engine.bootstrap_android
-          uv run --extra export --group dev python -m engine.prepare
           uv run --extra export --group dev python -m engine.bootstrap_shaderc
-      - name: Export and verify workloads
-        run: |
-          uv run --extra export --group dev python -m layers.export
-          uv run --extra export --group dev python -m engine.verify_cpu
       - name: Build the signed browser runner
         env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          XRGPU_READ_TOKEN: ${{ secrets.XRGPU_READ_TOKEN }}
           XRBENCH_WEB_KEYSTORE_BASE64: ${{ secrets.XRBENCH_WEB_KEYSTORE_BASE64 }}
           XRBENCH_WEB_STORE_PASSWORD: ${{ secrets.XRBENCH_WEB_STORE_PASSWORD }}
           XRBENCH_WEB_KEY_ALIAS: ${{ secrets.XRBENCH_WEB_KEY_ALIAS }}

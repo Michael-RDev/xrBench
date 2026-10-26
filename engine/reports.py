@@ -69,6 +69,9 @@ def summarize(report):
             for key in ("execution_ms", "model_ms", "gpu_ms", "gpu_span_ms", "input_staging_ms", "output_staging_ms", "submit_and_wait_ms")}
     report["counts"] = {s: sum(r.get("status") == s for r in report.get("results", []))
                         for s in ("passed", "failed", "skipped", "interrupted")}
+    if report.get('schema_version')==3:
+        report['counts']['unsupported']=sum(r.get('status')=='unsupported' for r in report.get('results',[]))
+        return report
     if report.get("status") == "running":
         report["counts"]["interrupted"] = 0  # These rows are still being measured.
     if report.get("configuration", {}).get("mode") == "xr":
@@ -105,6 +108,9 @@ def summarize(report):
 
 def validate(report):
     canonical(report)  # Reject NaN/Infinity anywhere in the envelope.
+    if isinstance(report,dict) and report.get('schema_version')==3:
+        from engine.native_reports import validate as validate_native
+        return validate_native(report)
     if not isinstance(report, dict) or report.get("schema_version") != 2:
         raise ValueError("Expected native benchmark schema version 2")
     if not RUN_ID.fullmatch(str(report.get("run_id", ""))):

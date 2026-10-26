@@ -5,7 +5,7 @@ import {sha256} from '../web/browser/evidence.mjs';
 import {manifest, nativeReport, MemoryStore} from './browser-fixtures.mjs';
 
 const report = status => nativeReport({...manifest().configurations.gpu, run_id: 'run-' + 'a'.repeat(32)}, status);
-const acknowledge = async body => ({stored: true, run_id: JSON.parse(body).run_id, storage: 'local', payload_sha256: await sha256(new TextEncoder().encode(body))});
+const acknowledge = async body => ({stored: true, run_id: JSON.parse(body).run_id, storage: 'postgresql', payload_sha256: await sha256(new TextEncoder().encode(body))});
 const send = async d => {d.kick(); await d.task;};
 
 test('automatic delivery sends raw evidence once, validates its receipt, and preserves the browser copy', async () => {
@@ -20,7 +20,7 @@ test('automatic delivery sends raw evidence once, validates its receipt, and pre
   assert.deepEqual(JSON.parse(calls[0].options.body), native);
   assert.equal(calls[0].options.credentials, 'omit'); assert.equal(calls[0].options.redirect, 'error');
   assert.equal(d.snapshot().reports[0].status, 'sent');
-  assert.equal(d.snapshot().reports[0].receipt.storage, 'local');
+  assert.equal(d.snapshot().reports[0].receipt.storage, 'postgresql');
   assert.equal((await store.deliveries())[0].body, undefined);
   assert.deepEqual((await store.report(native.run_id)).native, native);
 });
@@ -46,6 +46,13 @@ test('HTTP failures and mismatched receipts retain the exact queued evidence', a
     const [row] = await store.deliveries(); assert.equal(row.status, 'pending');
     assert.deepEqual(JSON.parse(row.body), report()); assert.ok(row.error);
   }
+});
+
+test('a file receipt never claims PostgreSQL has stored a report',async()=>{
+  const store=new MemoryStore(),d=new ReportDelivery({store,fetcher:async(_,o)=>({ok:true,json:async()=>({...await acknowledge(o.body),storage:'local'})})});
+  await d.queue(report());await send(d);
+  assert.equal(d.snapshot().reports[0].status,'pending');
+  assert.ok((await store.deliveries())[0].body);
 });
 
 test('demo identifiers, simulated labels, and unfinished reports never enter the delivery queue', async () => {

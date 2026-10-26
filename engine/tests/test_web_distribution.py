@@ -13,7 +13,7 @@ from engine.paths import ROOT
 from engine.reports import save, summarize, validate
 from engine.web_distribution import publish
 from engine.kernel_package import provenance
-from layers import catalog, revision
+from engine.workloads import catalog, revision
 
 
 @pytest.fixture

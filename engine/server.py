@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from layers import catalog, revision
+from engine.workloads import catalog, revision
 from engine.analysis import compare
 from engine.paths import ROOT
 from engine.reports import RUN_ID, canonical
@@ -92,7 +92,9 @@ def handler(controller, token):
                 files["/shared/session.mjs"]=SHARED/"session.mjs"
                 if path in files and files[path].is_file():
                     file=files[path]
-                    self.respond(200,file.read_bytes(),(mimetypes.guess_type(file)[0] or "application/octet-stream")+"; charset=utf-8");return
+                    payload=file.read_bytes()
+                    if path=="/":payload=payload.replace(b'data-transport="webusb"',b'data-transport="local"')
+                    self.respond(200,payload,(mimetypes.guess_type(file)[0] or "application/octet-stream")+"; charset=utf-8");return
                 self.respond(404,dict(error="Not found"))
             except ValueError:self.respond(400,dict(error="Invalid history page or comparison request"))
             except KeyError:self.respond(404,dict(error="Run not found"))

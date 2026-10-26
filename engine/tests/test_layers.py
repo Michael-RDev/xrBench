@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from layers import OPERATIONS, catalog, correctness, fixtures, module, reference, select
+from engine.workloads import OPERATIONS, catalog, correctness, fixtures, module, reference, select
 
 
 def test_catalog_and_presets():
@@ -15,7 +15,7 @@ def test_catalog_and_presets():
 
 
 def test_layer_source_edits_invalidate_bundle_revision(tmp_path, monkeypatch):
-    import layers
+    from engine import workloads as layers
 
     script = tmp_path / "linear" / "layer.py"
     script.parent.mkdir()
@@ -68,7 +68,7 @@ def test_invalid_outputs_fail(actual,expected):
 
 def test_export_preserves_unsupported_reason(tmp_path,monkeypatch):
     pytest.importorskip("torch")
-    from layers import export
+    from engine.workloads import export
     spec=catalog();spec["cases"]=spec["cases"][:1]
     monkeypatch.setattr(export,"catalog",lambda *args:spec)
     def unsupported(*args):raise ValueError("not fully delegated")

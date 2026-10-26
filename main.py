@@ -8,7 +8,7 @@ def main():
         from engine.__main__ import main as developer
         developer(default_port=8766, automatic=True)
     else:
-        from engine.static_site import main as browser
+        from engine.public_server import main as browser
         browser()
 
 

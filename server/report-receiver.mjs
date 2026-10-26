@@ -40,7 +40,7 @@ export function supabaseStore({url, serviceKey, fetcher = globalThis.fetch}) {
     if (receipt?.stored !== true || receipt.run_id !== submission.p_report.run_id ||
         receipt.payload_sha256 !== submission.p_payload_sha256 || receipt.report_sha256 !== submission.p_report_sha256)
       throw new ReceiverError(503, 'Report storage did not confirm this report.');
-    return receipt;
+    return {...receipt,storage:'postgresql'};
   };
 }
 

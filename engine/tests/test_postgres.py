@@ -34,7 +34,7 @@ def test_operator_sql_files_initialize_upgrade_and_repeat_without_losing_reports
     store = uninitialized_store
     with pytest.raises(SchemaNotReady):
         store.health()
-    first, second = migration_files()
+    first, *remaining = migration_files()
     with store.connect() as db:
         db.autocommit = True
         db.execute(first.read_text())
@@ -43,7 +43,7 @@ def test_operator_sql_files_initialize_upgrade_and_repeat_without_losing_reports
     receipt = store.put(summarize(report))
     with store.connect() as db:
         db.autocommit = True
-        db.execute(second.read_text())
+        for path in remaining:db.execute(path.read_text())
     assert store.health()
     with store.connect() as db:
         db.autocommit = True
@@ -90,8 +90,37 @@ def test_migrations_persistence_and_conflict(store,report):
     with pytest.raises(FileExistsError):reopened.put(changed)
     assert len(reopened.recent())==1
     with store.connect() as db:
-        assert db.execute("SELECT count(*) FROM xrgpu_benchmarks.schema_migrations").fetchone()[0]==2
+        assert db.execute("SELECT count(*) FROM xrgpu_benchmarks.schema_migrations").fetchone()[0]==len(migration_files())
         assert db.execute("SELECT count(*) FROM xrgpu_benchmarks.benchmark_results").fetchone()[0]==1
+
+
+def test_native_operator_report_commits_all_rows_and_retries_idempotently(store, tmp_path):
+    from engine.tests.test_native_public import native_fixture
+    from engine.public_server import PostgresReports
+    import json
+    report, manifest = native_fixture()
+    receiver = PostgresReports(store, [manifest])
+    payload = json.dumps(report).encode()
+    from engine.public_server import create_server
+    import threading
+    from urllib.request import Request, urlopen
+    server = create_server(store, tmp_path, port=0, manifests=[manifest])
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        request = Request(f'http://localhost:{server.server_port}/api/reports', data=payload,
+                          headers={'Content-Type': 'application/json'})
+        with urlopen(request, timeout=10) as response:
+            receipt = json.load(response)
+        assert receipt['storage'] == 'postgresql'
+    finally:
+        server.shutdown();server.server_close();thread.join()
+    assert receiver.put(payload) == receipt
+    stored = store.get(report['run_id'])
+    assert stored['schema_version'] == 3
+    assert stored['native_report'] == report
+    with store.connect() as db:
+        assert db.execute('SELECT count(*) FROM xrgpu_benchmarks.benchmark_results').fetchone()[0] == 221
 
 
 def test_transaction_rolls_back_on_result_failure(store,report):

@@ -7,7 +7,7 @@ import {mountHeadset} from '/bench/ascii-headset.mjs';
 import {CPU_RESTRICTION} from '/bench/processor-policy.mjs';
 import {ENABLE_SMOKE_DEMO} from '/bench/features.mjs';
 
-const hosted=document.documentElement.dataset.transport==='webusb';
+const hosted=document.documentElement.dataset.transport!=='local';
 const browserService=hosted?(await import('/bench/browser/entry.mjs')).createBrowserService():null;
 
 const $=id=>document.getElementById(id);
@@ -77,8 +77,8 @@ function renderDevice(){
     $('device-help').textContent=status?.usb_supported===false?'Use desktop Chrome or Edge on the HTTPS website.':view.kind==='multiple'?'Choose your headset, then press Run.':'Press Run to connect and install the runner automatically. Allow USB debugging in your headset.';
   }else if(hosted&&activeSession()){
     const current=activeSession();
-    $('device-help').hidden=false;$('device-help').textContent=current.status==='disconnected'||!hasNativeRun(current)?current.message:'Keep the headset awake with the benchmark app open until the benchmark finishes.';
-  }else if(view.kind==='connected'&&!status?.apk_ready){$('device-help').textContent='The developer runner has not been built.';$('device-help').hidden=false;}
+    $('device-help').hidden=false;$('device-help').textContent=current.status==='disconnected'||!hasNativeRun(current)?current.message:'You can take off the headset. Keep USB connected until results are saved.';
+  }else if(view.kind==='connected'&&!status?.apk_ready){$('device-help').textContent='The runner for this website release is unavailable. Please retry later.';$('device-help').hidden=false;}
   document.querySelector('.device-panel').dataset.state=view.kind;
 }
 function renderCatalog(){
@@ -158,8 +158,8 @@ function render(){
   const stopping=running?.cancel_requested;
   const blocked=blockedConnection(),preparing=hosted&&!!running?.phases&&!hasNativeRun(running);
   $('run-icon').textContent=running&&!blocked?'■':'▶';
-  $('run-label').textContent=stopping?'Stopping…':busy?(blocked?'Connecting…':running?'Stopping…':'Starting…'):blocked?'Retry connection':running?(preparing?'Cancel':'Stop'):'Run';
-  $('run').setAttribute('aria-label',blocked?'Retry connection':running?(preparing?'Cancel connection':'Stop benchmark'):'Run GPU benchmark');$('run').disabled=(!connected&&!running)||busy||!!stopping||(hosted&&status?.usb_supported===false&&!running);$('run').setAttribute('aria-busy',String(busy||!!stopping));
+  $('run-label').textContent=stopping?'Stopping…':busy?(blocked?'Connecting…':running?'Stopping…':'Starting…'):running?.runner_outdated?'Update runner':blocked?'Retry connection':running?(preparing?'Cancel':'Stop'):'Run';
+  $('run').setAttribute('aria-label',running?.runner_outdated?'Update runner':blocked?'Retry connection':running?(preparing?'Cancel connection':'Stop benchmark'):'Run GPU benchmark');$('run').disabled=(!connected&&!running)||busy||!!stopping||(hosted&&status?.usb_supported===false&&!running);$('run').setAttribute('aria-busy',String(busy||!!stopping));
   $('connection-cancel').hidden=!blocked;$('connection-cancel').disabled=busy||!!stopping;
   $('connection-cancel').textContent=preparing?'Cancel':'Stop';
   const preparationOnly=hosted&&parent&&!hasNativeProgress(parent);
@@ -174,7 +174,6 @@ function render(){
   presentChip();
   const issue=parent?.phases.find(p=>p.status==='unsupported')?.reason;
   $('notice-message').textContent=serviceError||actionError||issue||'';$('notice').hidden=!(serviceError||actionError||issue);
-  if($('setup-help'))$('setup-help').hidden=hosted||!/benchmark app is not ready|\bAPK\b/i.test(actionError);
   $('download-session').hidden=!hosted||!parent||!parent.phases.some(p=>p.run?.report_available);
   const buttons=$('result-processors');buttons.hidden=!parent;
   if(parent){buttons.replaceChildren(...parent.phases.map(phase=>{const button=document.createElement('button');button.type='button';button.textContent=phase.processor.toUpperCase();button.disabled=!reports[phase.run_id];button.setAttribute('aria-pressed',String(selected===phase.run_id));button.onclick=()=>{selected=phase.run_id;report=reports[selected];render();};return button;}));}
@@ -273,8 +272,9 @@ function cpuIdentity(){
   return parent?.capabilities_checked&&parent.connection_id===view.connectionId?parent.identity:view.identity;
 }
 function renderAdvanced(preview=null){
+  if($('benchmark-test-count')&&status?.catalog?.cases)$('benchmark-test-count').textContent=String(status.catalog.cases.length);
   const identity=preview?preview.identity:cpuIdentity();
-  $('advanced-cpu').hidden=!identity?.cpu_eligible;
+  $('advanced-cpu').hidden=!identity?.cpu_eligible||!preview&&status?.cpu_supported===false;
   $('run-cpu').textContent=preview?'Run CPU demo':'Run CPU benchmark';
   $('run-cpu').disabled=preview?preview.stage!=='connected'||preview.session?.status==='running':busy||!!activeSession()||!!active()||!connected||(!hosted&&!deviceView(status,serviceError,selectedSerial).authorized);
   $('cpu-reason').textContent=preview?'Simulated chip with no GPU. Preview CPU testing with sample data.':'This chip is confirmed to have no GPU. CPU capability will be checked before execution.';
@@ -285,17 +285,22 @@ async function runBenchmark(processor='gpu',cancel=false){
     else if(processor!=='cpu'||demo.controller.snapshot.identity?.cpu_eligible){demoGeneration++;animateNext=true;demo.controller.start(processor);}return;
   }
   if(busy)return;const running=activeSession()||active();if((!connected&&!running)||running?.cancel_requested)return;actionError='';
-  if(blockedConnection()&&!cancel){await retry();return;}
+  if(blockedConnection()&&!cancel&&!running?.runner_outdated){await retry();return;}
   if(processor==='cpu'&&(running||!cpuIdentity()?.cpu_eligible)){actionError=CPU_RESTRICTION;render();return;}
   let device;
   if(!running&&!hosted){
     const view=deviceView(status,'',selectedSerial);device=status.devices.find(d=>d.serial===view.serial&&d.state==='device'&&d.supported);
     if(!device){actionError=view.kind==='multiple'?'Choose one device before running.':view.kind==='absent'?'Connect an Android arm64 device by USB and approve USB debugging.':view.help;render();return;}
-    if(!status.apk_ready){actionError='The benchmark app is not ready on this computer. Complete local runner setup below, then select Retry.';render();return;}
+    if(!status.apk_ready){actionError='The runner for this website release is unavailable. Please retry later.';render();return;}
   }
   busy=true;mutation++;render();
   try{
-    if(running?.session_id){const stopped=await api('/api/benchmark-sessions/'+running.session_id+'/stop',{});status.benchmark_sessions=status.benchmark_sessions.map(s=>s.session_id===stopped.session_id?stopped:s);}
+    if(hosted&&running?.runner_outdated&&!cancel){
+      const created=await browserService.upgrade(running.session_id,crypto.randomUUID().replaceAll('-',''));
+      selectedSession=created.session_id;selected=null;report=null;animateNext=true;
+      status.benchmark_sessions=[created,...status.benchmark_sessions.filter(s=>s.session_id!==running.session_id&&s.session_id!==created.session_id)];
+    }
+    else if(running?.session_id){const stopped=await api('/api/benchmark-sessions/'+running.session_id+'/stop',{});status.benchmark_sessions=status.benchmark_sessions.map(s=>s.session_id===stopped.session_id?stopped:s);}
     else if(running){const stopped=await api('/api/runs/'+running.run_id+'/stop',{});status.jobs=status.jobs.map(r=>r.run_id===stopped.run_id?stopped:r);}
     else{
       if(pendingRequest&&pendingRequest.processor!==processor)pendingRequest=null;

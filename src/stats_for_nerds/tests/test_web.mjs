@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {casesForReport,caseState,caseCounts,filterCases,needsAttention,timings} from '../web/view-model.mjs';
-const catalog=JSON.parse(readFileSync(new URL('../../../layers/catalog.json',import.meta.url))).cases;
+const catalog=JSON.parse(readFileSync(new URL('../../../engine/workloads/catalog.json',import.meta.url))).cases;
 const base={id:'linear_odd',operation:'linear',rows:[]};
 test('catalog preview includes every case and operation',()=>{const c=casesForReport(catalog,null,'current');assert.equal(c.length,63);assert.equal(new Set(c.map(c=>c.operation)).size,25);assert.equal(caseCounts(c,null).pending,63);});
 test('outcomes distinguish unsupported, failed, interrupted and active evidence',()=>{for(const status of ['passed','failed','skipped','interrupted']){const c={...base,rows:[{status}]};assert.equal(caseState(c,{status:'complete'}),status);assert.equal(needsAttention(c,{status:'complete'}),status!=='passed');}assert.equal(caseState({...base,rows:[{status:'interrupted'}]},{status:'running'}),'running');assert.equal(caseState({...base,rows:[{status:'passed'}]},{status:'running',progress:{current_case:'linear_odd'}}),'running');});

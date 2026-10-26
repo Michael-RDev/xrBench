@@ -16,7 +16,7 @@ from engine.reports import save
 
 
 def cases():
-    from layers import catalog
+    from engine.workloads import catalog
     values = copy.deepcopy(catalog("development")["cases"])
     for mode in ("none", "tanh"):
         for shape in ([1, 7, 5], [1, 32, 1536], [1, 128, 1536], [1, 256, 1536]):
@@ -104,7 +104,7 @@ def reuse_programs(case, source_case, source, source_manifest, package, tensors,
 def export(package_path, xrgpu_source, output, *, selected=None):
     import numpy as np
     import torch
-    from layers import correctness, fixtures, module, reference, revision
+    from engine.workloads import correctness, fixtures, module, reference, revision
     package = verify(package_path)
     xrgpu_source, output = Path(xrgpu_source).resolve(), Path(output).resolve()
     if not (xrgpu_source / "runtime/model_bundle.py").is_file():

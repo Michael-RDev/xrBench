@@ -4,7 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {createDemoController,demoIdentity} from '../web/smoke-demo.mjs';
 
 const devices=JSON.parse(await readFile(new URL('../../../engine/device-catalog.json',import.meta.url),'utf8'));
-const cases=JSON.parse(await readFile(new URL('../../../layers/catalog.json',import.meta.url),'utf8'));
+const cases=JSON.parse(await readFile(new URL('../../../engine/workloads/catalog.json',import.meta.url),'utf8'));
 function clock(){
   let now=100000,id=0;const callbacks=new Map();
   return {now:()=>now,timers:{setInterval(fn){callbacks.set(++id,{fn,repeat:true});return id;},clearInterval(id){callbacks.delete(id);},

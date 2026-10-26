@@ -4,7 +4,7 @@ import json
 import numpy as np
 import pytest
 
-from layers import catalog, fixtures, reference, module, correctness
+from engine.workloads import catalog, fixtures, reference, module, correctness
 from engine.backends import discovery, get_backend
 from engine.profiles import assess as assess_profile, identity
 from engine.qualification import request, assess

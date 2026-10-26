@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from engine.controller import Controller
-from layers import revision, catalog
+from engine.workloads import revision, catalog
 from engine.reports import digest, save
 from engine.kernel_package import provenance
 

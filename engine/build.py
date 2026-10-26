@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from layers import revision
+from engine.workloads import revision
 from engine.paths import BUILD, ENGINE as BASE, ROOT, STATE
 from engine.reports import save
 
@@ -49,6 +49,9 @@ def build_environment(toolchain, pins):
 
 
 def build(jobs=4, web=False):
+    if web:
+        from engine.public_build import build as build_public
+        return build_public(jobs, web=True)
     from engine.prepare import verify
     from engine import kernels, kernel_package
     package = kernel_package.resolve(fetch=True)
@@ -72,7 +75,7 @@ def build(jobs=4, web=False):
     bundle = build_dir / "bundle"
     manifest = json.loads((bundle / "manifest.json").read_text())
     if manifest["suite_revision"] != revision():
-        raise RuntimeError("Layer source changed; rerun uv run --extra export --group dev python -m layers.export")
+        raise RuntimeError("Layer source changed; rerun uv run --extra export --group dev python -m engine.workloads.export")
     source_paths = sorted((BASE / "native").rglob("*")) + sorted((BASE / "android").rglob("*.java"))
     source_paths += [BASE / "prepare.py", BASE / "build.py", ROOT / "dependencies.json"] + sorted((BASE / "patches").glob("*.patch"))
     source_paths += [BASE / "kernel_hooks.py", BASE / "kernels.py", BASE / "kernel_package.py"]

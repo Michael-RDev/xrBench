@@ -1,4 +1,5 @@
 import {gpuEligibility} from '../processor-policy.mjs';
+import {validateNativeManifest,validateNativeReport} from './native-contract.mjs';
 export const terminal = new Set(['complete', 'failed', 'canceled']);
 export const runPattern = /^run-[0-9a-f]{32}$/;
 const gpuSpanScopes = new Set(['single graph, common queue timestamp domain', 'single dispatch sequence, common queue timestamp domain']);
@@ -14,10 +15,11 @@ export async function sha256(bytes) {
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 export function validateManifest(m) {
-  requireValue(m?.protocol_version === 1 && m.package === 'org.xrgpu.benchmarks.web' && m.activity === 'org.xrgpu.benchmarks.MainActivity', 'Unsupported runner distribution');
+  requireValue([1,2].includes(m?.protocol_version) && (m.package === 'org.xrgpu.benchmarks.web'||/^org\.xrgpu\.benchmarks\.web\.s[a-f0-9]{64}$/.test(m.package)) && m.activity === 'org.xrgpu.benchmarks.MainActivity', 'Unsupported runner distribution');
   requireValue(/^[a-f0-9]{64}$/.test(m.apk_sha256) && m.apk === m.apk_sha256 + '.apk', 'Invalid runner checksum or location');
   requireValue(Number.isSafeInteger(m.apk_bytes) && m.apk_bytes > 0 && m.apk_bytes <= 1024 ** 3, 'Invalid runner size');
   requireValue(m.min_sdk === 29 && m.abi === 'arm64-v8a' && m.version_code > 0 && /^[a-f0-9]{64}$/.test(m.signing_certificate_sha256), 'Missing runner provenance');
+  if(m.protocol_version===2){try{return validateNativeManifest(m,canonical);}catch(e){throw new EvidenceError(e.message,{cause:e});}}
   requireValue(Array.isArray(m.catalog?.cases) && m.catalog.cases.length === 63 && new Set(m.catalog.cases.map(c => c.id)).size === 63, 'Expected the standard 63-case suite');
   requireValue(Array.isArray(m.device_catalog?.devices) && Array.isArray(m.device_catalog?.chips), 'Missing device catalog');
   requireValue(Array.isArray(m.backends), 'Invalid runner backend list');
@@ -65,7 +67,7 @@ export function summarize(report) {
     row.timings = Object.fromEntries(['execution_ms', 'model_ms', 'gpu_ms', 'gpu_span_ms', 'input_staging_ms', 'output_staging_ms', 'submit_and_wait_ms'].map(k => [k,
       row.timing_valid ? distribution(row.samples.map(s => k === 'gpu_span_ms' && !gpuSpanScopes.has(s.gpu_span_scope) ? null : s[k])) : null]));
   }
-  result.counts = Object.fromEntries(['passed', 'failed', 'skipped', 'interrupted'].map(s => [s, result.status === 'running' && s === 'interrupted' ? 0 : result.results.filter(r => r.status === s).length]));
+  result.counts = Object.fromEntries(['passed', 'failed', 'skipped', 'interrupted',...(report.schema_version===3?['unsupported']:[])].map(s => [s, result.status === 'running' && s === 'interrupted' ? 0 : result.results.filter(r => r.status === s).length]));
   return result;
 }
 export function validateProgress(p, config) {
@@ -76,6 +78,7 @@ export function validateProgress(p, config) {
 }
 export function validateReport(report, config, catalog, {partial = false} = {}) {
   canonical(report);
+  if(report?.schema_version===3){try{return validateNativeReport(report,config,catalog,{partial,canonical});}catch(e){throw new EvidenceError(e.message,{cause:e});}}
   requireValue(report?.schema_version === 2 && runPattern.test(report.run_id) && report.run_id === config.run_id, 'Native report identity mismatch');
   requireValue(canonical(report.configuration) === canonical(config), 'Native report does not match requested configuration');
   requireValue(terminal.has(report.status) || (partial && report.status === 'running'), 'Invalid report status');

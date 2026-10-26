@@ -5,7 +5,7 @@ import uuid
 import secrets
 from pathlib import Path
 
-from layers import revision
+from engine.workloads import revision
 from engine.selection import resolve_operations
 from engine.backends import BACKENDS, TARGETS, get_backend
 from engine import profiles

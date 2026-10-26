@@ -35,7 +35,7 @@ public final class Runner {
         power=context.getSystemService(PowerManager.class);battery=context.getSystemService(BatteryManager.class);
     }
     void check() throws Exception {
-        if(canceled.get()||new File(directory,"cancel").exists()||Thread.currentThread().isInterrupted())throw new InterruptedException("Canceled by user or activity lifecycle");
+        if(canceled.get()||new File(directory,"cancel").exists()||Thread.currentThread().isInterrupted())throw new InterruptedException("Canceled by user or benchmark worker shutdown");
         if(SystemClock.elapsedRealtime()>deadline)throw new SessionFailure("Run exceeded its bounded deadline");
         if(power.getCurrentThermalStatus()>=PowerManager.THERMAL_STATUS_SEVERE)throw new SessionFailure("Thermal state severe; measurements stopped");
         if(xr){JSONObject scene=new JSONObject(Native.scene(false,false));
@@ -265,6 +265,8 @@ public final class Runner {
                 .put("suite_revision",config.getString("suite_revision")).put("runtime_revision",config.getString("runtime_revision"))
                 .put("device",caps).put("results",results).put("timing_scope","execution_ms: JNI staging + native forward + output copy; model_ms: native forward including delegate staging; gpu_ms: sum of operation timestamp intervals, not critical-path latency");
             report.put("processor",cpu()?"cpu":"gpu");
+            report.put("execution_context",context instanceof BenchmarkService?"foreground_service":"xr_activity")
+                .put("display_interactive_at_start",power.isInteractive());
             if(cpu())report.put("threading_policy","single calling thread")
                 .put("timing_scope",backendName.equals("cpu_resident")?"execution_ms: JNI invocation + CPU matmul; model_ms: CPU matmul; persistent buffers; output copy outside samples":"execution_ms: JNI staging + portable CPU forward + output copy; model_ms: portable CPU forward");
             persist("Verifying native layer assets");
@@ -329,7 +331,7 @@ public final class Runner {
             try {if(current!=null&&current.optString("status").equals("interrupted"))current.put("error",error.toString());
                 if(report!=null)report.put("status",error instanceof InterruptedException?"canceled":"failed").put("error",error.toString());progress.accept(error.toString());}catch(Exception ignored){}
         } finally {
-            try {if(report!=null){caseIndex=-1;runPhase="finished";report.put("finished_at",Instant.now().toString());persist("Run "+report.getString("status")+" · "+completed.size()+" / "+config.getJSONArray("cases").length()+" tests finished");}}catch(Exception error){progress.accept("Could not save report: "+error);}
+            try {if(report!=null){caseIndex=-1;runPhase="finished";report.put("finished_at",Instant.now().toString()).put("display_interactive_at_finish",power.isInteractive());persist("Run "+report.getString("status")+" · "+completed.size()+" / "+config.getJSONArray("cases").length()+" tests finished");}}catch(Exception error){progress.accept("Could not save report: "+error);}
             active.set(false);
         }
     }

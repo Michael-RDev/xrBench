@@ -116,7 +116,7 @@ def test_capture_directory_cannot_be_inside_public_site(tmp_path):
         create_server(tmp_path, 0, reports=tmp_path / 'reports')
 
 
-def test_mock_headset_to_browser_delivery_to_local_json(receiver):
+def test_file_capture_preserves_evidence_without_claiming_postgresql_delivery(receiver):
     """Software-only end-to-end capture; the fixture is not a hardware measurement."""
     if not shutil.which('node'):
         pytest.skip('Node required for browser delivery integration')
@@ -140,7 +140,8 @@ const controller = new BrowserController({transport, store, delivery, manifestUr
 await controller.start('fixture-only','test-request');
 await [...controller.workers.values()][0]?.task; await delivery.task;
 assert.equal(controller.sessions[0].status,'complete'); assert.equal(launches,1);
-assert.equal(delivery.snapshot().reports[0].status,'sent');
+assert.equal(delivery.snapshot().reports[0].status,'pending');
+assert.ok((await store.deliveries())[0].body, 'Keep the exact report until PostgreSQL confirms');
 const exported = await controller.exportSession(controller.sessions[0].session_id);
 assert.equal(exported.reports[0].results.length,63);
 assert.deepEqual(exported.reports[0], optimizationReport(config));

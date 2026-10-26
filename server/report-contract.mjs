@@ -23,7 +23,7 @@ export async function prepareSubmission(payload, manifests) {
   const manifest = manifests.find(m => m.apk_sha256 === config?.apk_sha256);
   if (!manifest) throw Error('Unknown runner release.');
   validateManifest(manifest);
-  const processor = {executorch_vulkan: 'gpu', executorch_cpu: 'cpu'}[report.backend];
+  const processor = {xrgpu_vulkan: 'gpu', executorch_vulkan: 'gpu', executorch_cpu: 'cpu'}[report.backend];
   if (!processor || !targets.has(report.execution_location)) throw Error('Unsupported execution target.');
   const expected = {...manifest.configurations[processor], run_id: report.run_id, execution_target: report.execution_location};
   validateReport(report, expected, manifest.catalog);

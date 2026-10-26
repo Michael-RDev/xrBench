@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import {JSDOM} from 'jsdom';
 
 const root=new URL('../../../',import.meta.url);
-const catalog=JSON.parse(await readFile(new URL('layers/catalog.json',root),'utf8'));
+const catalog=JSON.parse(await readFile(new URL('engine/workloads/catalog.json',root),'utf8'));
 const id='run-'+'a'.repeat(32);
 const benchId='bench-'+'b'.repeat(32);
 const devicesCatalog=JSON.parse(await readFile(new URL('engine/device-catalog.json',root),'utf8'));
@@ -28,7 +28,7 @@ async function page(kind,report=null,stateOverrides={},options={}){
   const html=await readFile(new URL(`src/${pretty?'bench_web':'stats_for_nerds'}/web/index.html`,root),'utf8');
   const dom=new JSDOM(html,{url:'http://localhost:8765/'+(pretty?'':'stats/')+(options.search??(report?'?run='+id:'')),runScripts:'outside-only'});
   const window=dom.window,calls=[],intervals=new Map(),timeouts=new Map(),faults={start:false,status:false,...options.faults},downloads=[],scrolls=[];
-  if(options.hosted)window.document.documentElement.dataset.transport='webusb';
+  window.document.documentElement.dataset.transport=options.hosted?'webusb':'local';
   let time=Date.now(),timerId=0,nativeStarts=0,frameTime=0;const frames=new Map();window.Date.now=()=>time;window.structuredClone=structuredClone;
   let hidden=false;Object.defineProperty(window.document,'hidden',{get:()=>hidden});
   window.Blob=Blob;window.URL.createObjectURL=blob=>{downloads.push(blob);return 'blob:fixture';};window.URL.revokeObjectURL=()=>{};
@@ -134,7 +134,7 @@ test('hosted Run ignores local APK setup and Cancel remains available while down
     assert.equal(doc.getElementById('results').hidden,true);
     assert.equal(doc.getElementById('run').disabled,false);
     assert.match(doc.getElementById('run-status').textContent,/Downloading headset runner/);
-    assert.equal(doc.getElementById('setup-help').hidden,true);
+    assert.equal(doc.getElementById('setup-help'),null);
     doc.getElementById('run').click();await drain();
     assert.equal(p.calls.filter(c=>c.path.endsWith('/stop')).length,1);
     assert.equal(doc.getElementById('run-label').textContent,'Stopping…');
@@ -360,7 +360,7 @@ test('Run gives nearby setup guidance without starting an ambiguous or unavailab
     [{devices:[]},/Connect an Android arm64 device/],
     [{devices:[{...ready,state:'unauthorized'}]},/allow USB debugging/],
     [{devices:[ready,{...ready,serial:'two'}]},/Choose one device/],
-    [{apk_ready:false},/benchmark app is not ready/],
+    [{apk_ready:false},/runner.*unavailable/],
   ]){
     const p=await page('bench',null,state);
     try{
@@ -649,7 +649,7 @@ test('capability inspection is independent of benchmark execution and profile do
 });
 
 test('development suite changes selected workloads but keeps the standard suite intact',async()=>{
-  const development=JSON.parse(await readFile(new URL('layers/development.json',root),'utf8'));
+  const development=JSON.parse(await readFile(new URL('engine/workloads/development.json',root),'utf8'));
   const p=await page('stats',null,{development_catalog:{...catalog,cases:[...catalog.cases,...development.cases]}});
   try{
     const doc=p.window.document;
@@ -871,7 +871,8 @@ test('setup retry stays inline and a rendering failure leaves the real run contr
   const p=await page('bench',null,{apk_ready:false},{rendererFailure:true});
   try{
     const doc=p.window.document;doc.querySelector('#run').click();await drain();
-    assert.equal(doc.querySelector('#setup-help').hidden,false);
+    assert.equal(doc.querySelector('#setup-help'),null);
+    assert.match(doc.querySelector('#notice').textContent,/unavailable/i);
     assert.doesNotMatch(doc.querySelector('#notice').textContent,/Stats for Nerds/);
     assert.equal(p.calls.filter(c=>c.body).length,0);
     p.state.apk_ready=true;doc.querySelector('#retry-status').click();await drain();

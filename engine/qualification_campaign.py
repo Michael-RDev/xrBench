@@ -113,7 +113,7 @@ def prepare(package_path, expected_hash, workloads, target, output, *, discovery
     if len(set(discovery)) < 3 or len(set(holdout)) < 3 or set(discovery) & set(holdout):
         raise ValueError("At least three distinct discovery and held-out seeds required")
     from engine.qualification_fixtures import cases
-    from layers import revision
+    from engine.workloads import revision
     definitions = {case["id"]: case for case in cases()}
     suite_revision = revision()
     entries, ids = [], set()

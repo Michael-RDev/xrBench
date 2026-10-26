@@ -17,11 +17,12 @@ export function renderResults(document,status,job,report,source='native'){
   const simulated=source==='simulated';
   $('results').dataset.source=source;
   document.querySelector('.results-heading .eyebrow').textContent=simulated?'Simulated results · sample data':'Measured on your device';
-  $('results-title').textContent=simulated?'A preview of every layer.':'Every layer. On your silicon.';
+  const nativeOperators=status?.catalog?.kind==='xrbench.native-operator-suite'||report?.schema_version===3;
+  $('results-title').textContent=simulated?'A preview of every layer.':nativeOperators?'Every operator. On your device.':'Every layer. On your silicon.';
   $('results-link').hidden=simulated;
   document.querySelector('.results-note').textContent=simulated
     ? 'All timings and correctness outcomes below are simulated. These illustrative values are identical across device models and do not indicate hardware support or performance.'
-    : 'Each layer shows its median latency range across measured input shapes. Expand a layer for individual cases. Warmups and correctness checks are excluded.';
+    : nativeOperators?'Each operator shows native Vulkan execution time and typed correctness checks. Preparation and readback costs are recorded separately in the downloaded report.':'Each layer shows its median latency range across measured input shapes. Expand a layer for individual cases. Warmups and correctness checks are excluded.';
   $('results').hidden=!run;
   if(!run)return;
   const {evidence,entries,counts,done}=runEvidence(status,job,report);
@@ -35,7 +36,7 @@ export function renderResults(document,status,job,report,source='native'){
   const preset=evidence?.configuration?.preset||'smoke';
   const device=report?.device?.model||'Connected device';
   const processor=(report?.backend||job?.configuration?.backend||'').includes('cpu')?'CPU':'GPU';
-  $('run-context').textContent=simulated?`${device} · Simulated ${processor} · 20 synthetic samples per case`:`${device} · Native ${processor} · FP32 · ${evidence?.configuration?.mode==='xr'?'XR impact':preset==='sustained'?'Sustained measurement':`${preset==='standard'?'100':'20'} samples per case`}`;
+  $('run-context').textContent=simulated?`${device} · Simulated ${processor} · 20 synthetic samples per case`:`${device} · Native ${processor} · ${nativeOperators?'Typed Vulkan operators':'FP32'} · ${evidence?.configuration?.mode==='xr'?'XR impact':preset==='sustained'?'Sustained measurement':`${preset==='standard'?'100':'20'} samples per case`}`;
   $('completion-count').textContent=`${done} / ${entries.length} cases processed`;
   $('suite-progress').max=entries.length||1;
   $('suite-progress').value=done;

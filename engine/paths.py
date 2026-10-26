@@ -2,7 +2,7 @@ from pathlib import Path
 
 ENGINE = Path(__file__).resolve().parent
 ROOT = ENGINE.parent
-LAYERS = ROOT / "layers"
+LAYERS = ENGINE / "workloads"
 BUILD = ENGINE / ".build"
 STATE = ENGINE / ".state"
 ENV = ENGINE / ".env"

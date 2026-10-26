@@ -1,6 +1,6 @@
 import copy
 import pytest
-from layers import catalog
+from engine.workloads import catalog
 from engine.diagnostics import cost_model, efficiency
 from engine.reports import summarize, save
 from engine.tests import test_controller as controller_tests

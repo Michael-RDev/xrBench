@@ -9,6 +9,31 @@ import {manifest, nativeReport, MemoryStore} from './browser-fixtures.mjs';
 
 const settle = async () => {for (let i = 0; i < 30; i++) await new Promise(r => setImmediate(r));};
 
+test('a previous runner cannot block the next release and its checkpoint is preserved',async()=>{
+  const f=fixture();let g;
+  try{
+    const old=await f.start();await f.step();const previousConfig=structuredClone(f.launches[0]);
+    await f.close();
+    g=fixture({store:f.store,previousConfig,manifest:m=>{
+      m.apk_sha256='f'.repeat(64);m.apk=m.apk_sha256+'.apk';
+      for(const c of Object.values(m.configurations))c.apk_sha256=m.apk_sha256;
+    }});
+    const checkpoint=nativeReport(previousConfig,'running');g.available();g.reports.set(previousConfig.run_id,checkpoint);
+    const commands=[];g.transport.shell=async args=>{commands.push(args);return {code:0,stdout:''};};
+    const snapshot=await g.controller.snapshot();await g.step();
+    assert.equal(snapshot.benchmark_sessions[0].runner_outdated,true);
+    assert.equal(g.launches.length,0,'Loading a new website never replays the previous launch');
+    const current=await g.controller.upgrade(old.session_id,'new-release-request');
+    for(let i=0;i<3&&!g.launches.length;i++)await g.step();
+    assert.deepEqual(commands,[['am','force-stop',old.manifest.package]]);
+    assert.ok((await g.store.report(previousConfig.run_id)).native);
+    assert.equal(g.store.items.find(s=>s.session_id===old.session_id).status,'canceled');
+    assert.notEqual(current.session_id,old.session_id);
+    assert.equal(g.launches.length,1);
+    assert.equal(g.launches[0].apk_sha256,'f'.repeat(64));
+  }finally{await f.close();await g?.close();}
+});
+
 test('USB detection does not claim authorization or identify the processor', async () => {
   const f = fixture();
   try {
@@ -91,7 +116,7 @@ function fixture(options = {}) {
   let connected = true, reportAvailable = false, releaseCount = 0, pauses = [], reports = new Map();
   const transport = {
     supported: true, choose: () => Promise.resolve(devices[0]), discover: async () => connected ? devices : [],
-    connect: async (_, signal) => {calls.push('connect'); if (!connected) throw Error('disconnected'); await options.connect?.(signal); signal.throwIfAborted();}, close: async () => {},
+    connect: async (_, signal) => {calls.push('connect'); if (!connected) throw Error('disconnected'); await options.connect?.(signal); signal?.throwIfAborted();}, close: async () => {},
     properties: async () => ({model: 'Quest 3', sdk: 32, abi: 'arm64-v8a', soc_model: 'Qualcomm Snapdragon XR2 Gen 2', ...options.properties}),
     install: async (m, url, signal, message) => {calls.push('install'); message('Installing'); await options.install?.(signal); signal.throwIfAborted();},
     installedHash: async () => m.apk_sha256,
@@ -137,7 +162,7 @@ function fixture(options = {}) {
 test('finished native runs send their reports automatically without sending USB/session state', async () => {
   for (const status of ['complete', 'failed', 'canceled']) {
     const sent = [], f = fixture({delivery: store => new ReportDelivery({store, endpoint: '/api/reports', fetcher: async (url, {body}) => {
-      sent.push(JSON.parse(body)); return {ok: true, json: async () => ({stored: true, storage: 'local', run_id: sent.at(-1).run_id,
+      sent.push(JSON.parse(body)); return {ok: true, json: async () => ({stored: true, storage: 'postgresql', run_id: sent.at(-1).run_id,
         payload_sha256: await sha256(new TextEncoder().encode(body))})};
     }})});
     try {
@@ -232,7 +257,7 @@ test('headset lifecycle cancellation preserves results and explains how to rerun
     f.available(); await f.step();
     await [...f.controller.workers.values()][0]?.task;
     assert.equal(s.status, 'canceled'); assert.equal(s.cancel_requested, false);
-    assert.match(s.message, /Keep it awake/); assert.equal(f.launches.length, 1);
+    assert.match(s.message, /older runner stopped/); assert.equal(f.launches.length, 1);
     assert.equal((await f.controller.exportSession(s.session_id)).reports.length, 1);
   } finally {await f.close();}
 });

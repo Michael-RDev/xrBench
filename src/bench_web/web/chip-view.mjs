@@ -13,7 +13,7 @@ export function chipEvidence(session,reports,catalog,now=Date.now()){
     const progress=p.run?.progress||source?.progress||{},phaseRows=source?.results||[];
     const stopped=terminal.has(session.status)||terminal.has(p.run?.status||p.status);
     const state=id=>{const matches=phaseRows.filter(r=>r.case===id);if(matches.some(r=>r.status==='failed'||r.correctness?.passed===false))return 'failed';
-    if(matches.some(r=>r.status==='passed'&&r.timing_valid===false))return 'attention';if(matches.some(r=>r.status==='skipped'))return 'skipped';if(matches.some(r=>r.status==='passed'))return 'passed';
+    if(matches.some(r=>r.status==='passed'&&r.timing_valid===false))return 'attention';if(matches.some(r=>['skipped','unsupported'].includes(r.status)))return 'skipped';if(matches.some(r=>r.status==='passed'))return 'passed';
     if(id===progress.current_case)return stopped||stale?'interrupted':p===phase?'running':'pending';return stopped&&matches.length?'interrupted':'pending';};
     return [p.processor,plan.map(id=>({id,state:state(id)}))];
   }));

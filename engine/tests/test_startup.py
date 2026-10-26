@@ -121,7 +121,7 @@ def test_interrupt_during_readiness_check_exits_cleanly(monkeypatch, capsys):
     assert 'startup canceled' in capsys.readouterr().err
 
 
-@pytest.mark.parametrize('versions,ready', [([], False), ([1], False), ([1, 2], True)])
+@pytest.mark.parametrize('versions,ready', [([], False), ([1], False), ([1, 2], False), ([1, 2, 3], True)])
 def test_readiness_only_reads_schema_versions_and_tables(monkeypatch, versions, ready):
     calls = []
     def execute(query):

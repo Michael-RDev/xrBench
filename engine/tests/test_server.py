@@ -51,7 +51,7 @@ def test_session_origin_host_and_path_boundaries():
 
 def test_http_create_stop_recovery_and_report_download(tmp_path,report):
     from engine.controller import Controller
-    from layers import revision
+    from engine.workloads import revision
     from engine.reports import digest,save
     saved={};stops=[]
     def put(value):saved[value["run_id"]]=value;return dict(stored=True,run_id=value["run_id"],sha256=digest(value))
@@ -138,7 +138,7 @@ def test_saved_pagination_db_only_reports_comparisons_and_outage(tmp_path,report
 def test_http_benchmark_session_idempotency_read_stop_and_catalog(tmp_path):
     from engine.controller import Controller
     from engine.reports import save
-    from layers import revision
+    from engine.workloads import revision
     stops=[]
     adb=SimpleNamespace(devices=lambda:dict(devices=[dict(serial='quest',model='Quest 3',state='device',supported=True)]),stop=lambda *a:stops.append(a))
     from engine.kernel_package import provenance

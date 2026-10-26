@@ -1,4 +1,4 @@
-from layers import catalog
+from engine.workloads import catalog
 
 
 def resolve_operations(operations=None, profile="standard"):

@@ -1,13 +1,43 @@
 {
-  "executorch": {"url": "https://github.com/pytorch/executorch.git", "ref": "v1.4.1", "commit": "e4d02f41f7909e8ed5bf4a14ffc520d733453d9f"},
-  "openxr": {"url": "https://github.com/KhronosGroup/OpenXR-SDK.git", "ref": "release-1.1.49", "commit": "977f6675bc0057d5a54ed290cb5c71c699b1c0ab"},
-  "shaderc": {"url": "https://github.com/google/shaderc.git", "ref": "v2026.1", "commit": "301b4ede53d59b68bf55f95bb26412d9233c8187"},
-  "android": {"compile_sdk": 35, "min_sdk": 29, "ndk": "28.2.13676358", "agp": "8.9.2", "gradle": "8.11.1"},
+  "executorch": {
+    "url": "https://github.com/pytorch/executorch.git",
+    "ref": "v1.4.1",
+    "commit": "e4d02f41f7909e8ed5bf4a14ffc520d733453d9f"
+  },
+  "openxr": {
+    "url": "https://github.com/KhronosGroup/OpenXR-SDK.git",
+    "ref": "release-1.1.49",
+    "commit": "977f6675bc0057d5a54ed290cb5c71c699b1c0ab"
+  },
+  "shaderc": {
+    "url": "https://github.com/google/shaderc.git",
+    "ref": "v2026.1",
+    "commit": "301b4ede53d59b68bf55f95bb26412d9233c8187"
+  },
+  "android": {
+    "compile_sdk": 35,
+    "min_sdk": 29,
+    "ndk": "28.2.13676358",
+    "agp": "8.9.2",
+    "gradle": "8.11.1"
+  },
   "xrgpu": {
     "url": "https://github.com/Michael-RDev/xrGPU.git",
     "commit": "dc167a0ebc3c610b269604167c19996729c6bbdf",
     "package_id": "xrgpu.benchmark-kernels.v1",
     "package_path": "kernels/benchmark",
     "content_sha256": "a81df3ef206848e3966ae1926866847202fa2bba20832e9a4e16a8341182676b"
+  },
+  "xrgpu_native": {
+    "url": "https://github.com/Michael-RDev/xrGPU.git",
+    "commit": "c9e158caa4ce3765ac5a63bd4528f2e8b10d3c32",
+    "package_id": "xrgpu.native-operators.v1",
+    "catalog_sha256": "65fda0e30297d9ad01464e98bd77430ded8292a7738628227ff6c271213b5800",
+    "operator_count": 221
+  },
+  "native_json": {
+    "commit": "ac0133ea89a8fd730a9cc9649c5226a9995dc3e1",
+    "header_sha256": "665c436c38d49f4c9dbc8dc22a34d3432c6f41b3efd195ef377341af52b1491b",
+    "license_sha256": "46a65cffd1ea955132d95a8dd921640714a8d6b537d2e4e482d31145ae95b603"
   }
 }

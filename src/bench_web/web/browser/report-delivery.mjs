@@ -17,7 +17,7 @@ export class ReportDelivery {
   }
   has(id) {return this.rows.has(id);}
   async queue(native) {
-    if (native?.schema_version !== 2 || !/^run-[a-f0-9]{32}$/.test(native.run_id) || !terminal.has(native.status) || simulated(native))
+    if (![2,3].includes(native?.schema_version) || native.test_only===true || !/^run-[a-f0-9]{32}$/.test(native.run_id) || !terminal.has(native.status) || simulated(native))
       throw Error('Only finished native reports can be sent.');
     await this.init();
     if (this.has(native.run_id)) return;
@@ -51,7 +51,7 @@ export class ReportDelivery {
           body: row.body, credentials: 'omit', redirect: 'error', signal: this.abort.signal});
         if (!response.ok) throw Error(`Report receiver returned HTTP ${response.status}.`);
         const receipt = await response.json();
-        if (receipt.stored !== true || receipt.run_id !== row.run_id || receipt.payload_sha256 !== row.payload_sha256)
+        if (receipt.stored !== true || receipt.storage!=='postgresql' || receipt.run_id !== row.run_id || receipt.payload_sha256 !== row.payload_sha256)
           throw Error('Report receiver did not confirm this report.');
         // Persist acknowledgment before releasing the queued copy. Native evidence stays in reports.
         const sent = {...row, status: 'sent', receipt, body: undefined, error: undefined};

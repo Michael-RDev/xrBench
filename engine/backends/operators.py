@@ -10,9 +10,9 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class OperatorBackend:
     id: str = "xrgpu_vulkan"
-    label: str = "xrGPU native Vulkan operators (CLI)"
+    label: str = "xrGPU native Vulkan operators"
     resident: bool = False
 
     def check_request(self, config, cases):
-        raise ValueError("Use python -m engine.operators for typed native operator benchmarks")
+        raise ValueError("Typed native operators use the website's native suite, separately from the legacy FP32 model controller")
 

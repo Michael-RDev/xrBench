@@ -1,5 +1,5 @@
 import {readFile} from 'node:fs/promises';
-export const catalog = JSON.parse(await readFile(new URL('../../../layers/catalog.json', import.meta.url)));
+export const catalog = JSON.parse(await readFile(new URL('../../../engine/workloads/catalog.json', import.meta.url)));
 export const deviceCatalog = JSON.parse(await readFile(new URL('../../../engine/device-catalog.json', import.meta.url)));
 export function manifest(preset = 'standard') {
   const m = {protocol_version: 1, package: 'org.xrgpu.benchmarks.web', activity: 'org.xrgpu.benchmarks.MainActivity',

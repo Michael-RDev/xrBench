@@ -16,6 +16,7 @@ export function createBrowserService() {
     controller,
     start: (serial, requestId, processor = 'gpu') => controller.start(serial, requestId, processor),
     retry: id => controller.retry(id),
+    upgrade: (id,requestId) => controller.upgrade(id,requestId),
     exportSession: id => controller.exportSession(id),
     dispose: () => controller.dispose(),
     async request(path, body) {

@@ -28,7 +28,7 @@ export function caseState(entry, report) {
   const active=report && !terminal.has(report.status);
   if(active && (report.progress?.current_case===entry.id || rows.some(r=>r.status==='interrupted'))) return 'running';
   if(rows.some(r=>r.status==='interrupted')) return 'interrupted';
-  if(rows.some(r=>r.status==='skipped')) return 'skipped';
+  if(rows.some(r=>['skipped','unsupported'].includes(r.status))) return 'skipped';
   return rows.length && rows.every(r=>r.status==='passed') ? 'passed' : 'pending';
 }
 export function needsAttention(entry, report) {

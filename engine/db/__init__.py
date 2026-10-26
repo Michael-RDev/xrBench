@@ -49,12 +49,14 @@ class Store:
         config = report["configuration"]
         with self.connect() as db:
             db.execute("SET LOCAL search_path TO xrgpu_benchmarks")
+            db.execute("SET LOCAL lock_timeout = '10s'")
+            db.execute("SET LOCAL statement_timeout = '25s'")
             inserted = db.execute("""INSERT INTO benchmark_runs
                 (run_id,schema_version,suite_revision,runtime_revision,backend,mode,preset,status,
                  started_at,finished_at,device,configuration,report,report_sha256)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb,%s)
                 ON CONFLICT (run_id) DO NOTHING RETURNING run_id""",
-                (report["run_id"], 2, report["suite_revision"], report["runtime_revision"],
+                (report["run_id"], report["schema_version"], report["suite_revision"], report["runtime_revision"],
                  report["backend"], config["mode"], config["preset"], report["status"],
                  report["started_at"], report["finished_at"], json.dumps(report["device"]),
                  json.dumps(config), json.dumps(report, allow_nan=False), sha)).fetchone()

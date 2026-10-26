@@ -212,7 +212,7 @@ def test_package_path_traversal_and_symlinks_are_rejected(tmp_path):
 def test_complete_campaign_exports_rules_consumable_by_xrgpu_then_missing_model_fails(setup_campaign, tmp_path):
     path, plan, manifest = setup_campaign
     from engine.qualification_fixtures import cases
-    from layers import revision
+    from engine.workloads import revision
     bundle = Path(plan["workloads"][0]["bundle"])
     workloads = [dict(id="linear", type="operator", bundle=str(bundle), request=REQUEST)]
     for case in cases():

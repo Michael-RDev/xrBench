@@ -42,7 +42,7 @@ def test_cpu_reports_cannot_contain_gpu_timings(report):
 
 def test_cpu_export_readiness_survives_unsupported_gpu_operator(tmp_path,monkeypatch):
     pytest.importorskip('torch')
-    from layers import catalog, export
+    from engine.workloads import catalog, export
     spec=catalog();spec['cases']=spec['cases'][:1]
     monkeypatch.setattr(export,'catalog',lambda *args:spec)
     def export_backend(layer,inputs,destination,backend):

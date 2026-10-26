@@ -9,6 +9,7 @@ import {JSDOM} from 'jsdom';
 import {IDBFactory} from 'fake-indexeddb';
 import {BrowserStore} from '../src/bench_web/web/browser/store.mjs';
 import {optimizationReport} from '../src/bench_web/tests/browser-fixtures.mjs';
+import {operatorReport} from '../src/bench_web/tests/native-fixtures.mjs';
 import {summarize, sha256} from '../src/bench_web/web/browser/evidence.mjs';
 
 const dir = path.resolve(process.argv[2] || 'dist');
@@ -19,8 +20,10 @@ const dom = new JSDOM(html, {url: 'https://xrbench.example/site/', runScripts: '
 const w = dom.window, calls = [], intervals = []; let requests = 0;
 const manifest = JSON.parse(await readFile(path.join(dir, 'runner/manifest.json'), 'utf8'));
 assert.equal(manifest.configurations.gpu.preset, 'standard');
-assert.equal(manifest.configurations.gpu.calibration, 'auto');
-assert.equal(manifest.configurations.gpu.profiling ?? 'trace', 'trace');
+const typed=manifest.protocol_version===2,count=typed?221:63;
+assert.equal(manifest.catalog.cases.length,count);
+assert.equal(manifest.configurations.gpu.calibration, typed?'none':'auto');
+assert.equal(manifest.configurations.gpu.profiling ?? 'trace', typed?'timestamps':'trace');
 let expectedReport = null, submitted = 0;
 Object.assign(w, {structuredClone, TextEncoder, TextDecoder, AbortController, AbortSignal, ReadableStream, WritableStream, TransformStream});
 Object.defineProperty(w, 'crypto', {value: webcrypto});
@@ -38,7 +41,7 @@ w.fetch = async function(value, options) {
   assert.equal(url.origin, 'https://xrbench.example');
   if (expectedReport && url.pathname === '/site/api/reports') {
     assert.equal(options.method, 'POST'); assert.deepEqual(JSON.parse(options.body), expectedReport); submitted++;
-    return {ok: true, json: async () => ({stored: true, storage: 'local', run_id: expectedReport.run_id,
+    return {ok: true, json: async () => ({stored: true, storage: 'postgresql', run_id: expectedReport.run_id,
       payload_sha256: await sha256(new TextEncoder().encode(options.body))})};
   }
   assert.equal(url.pathname, '/site/runner/manifest.json', 'Hosted build must only fetch its same-origin distribution; never a local API');
@@ -63,12 +66,12 @@ try {
   // Delivery must use the deployment prefix and never include private session state.
   const store = new BrowserStore(w.indexedDB), run_id = 'run-' + 'd'.repeat(32);
   const configuration = {...manifest.configurations.gpu, run_id, execution_target: 'headset'};
-  expectedReport = optimizationReport(configuration);
+  expectedReport = typed?operatorReport(configuration,manifest.catalog):optimizationReport(configuration);
   await store.saveReport(run_id, {native: expectedReport, report: summarize(expectedReport)});
   await store.save({session_id: 'bench-' + 'e'.repeat(32), serial: 'private-fixture-serial', request_id: 'private-request',
     connection_id: 'private-connection', processor: 'gpu', manifest, status: 'complete', current_phase: 0,
     phases: [{processor: 'gpu', configuration, run_id, status: 'complete', run: {run_id, status: 'complete',
-      configuration, report_available: true, report_revision: 'fixture', counts: {passed: 63}}}]});
+      configuration, report_available: true, report_revision: 'fixture', counts: {passed: count}}}]});
   for (let attempts = 0; attempts < 100 && (await store.deliveries())[0]?.status !== 'sent'; attempts++) {
     for (const interval of intervals) await interval();
     await new Promise(resolve => setTimeout(resolve, 10));
@@ -78,10 +81,10 @@ try {
   assert.equal(w.document.getElementById('previous-runs').hidden, false);
   assert.equal(w.document.getElementById('previous-runs').open, false);
   w.document.querySelector('#previous-runs-list button').click(); await drain();
-  assert.equal(w.document.getElementById('report-delivery-status').textContent, 'Report saved locally.');
+  assert.equal(w.document.getElementById('report-delivery-status').textContent, 'Report sent. A copy stays in this browser.');
   assert.equal((await store.deliveries())[0].status, 'sent');
   assert.deepEqual((await store.report(run_id)).native, expectedReport);
-  assert.equal(expectedReport.results.length, 63);
+  assert.equal(expectedReport.results.length, count);
   assert.ok(expectedReport.results.every(row => row.samples.length === 100));
   (await store.ready).close();
   console.log('Production bundle passed: no localhost/API requests before a run; automatic native report delivery uses the site prefix; Run opens USB chooser; cancellation recovers.');

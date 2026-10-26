@@ -1,9 +1,11 @@
 plugins { id 'com.android.application' }
+def publicNative = project.findProperty('xrbenchPublicNative') == 'true'
 android {
     namespace 'org.xrgpu.benchmarks'
     compileSdk 35
     buildToolsVersion '35.0.0'
     defaultConfig {
+        buildConfigField 'boolean', 'PUBLIC_NATIVE', publicNative.toString()
         applicationId 'org.xrgpu.benchmarks'
         minSdk 29
         targetSdk 32
@@ -24,16 +26,26 @@ android {
     buildTypes {
         web {
             initWith debug
-            applicationIdSuffix '.web'
+            def certificate = (System.getenv('XRBENCH_WEB_CERT_SHA256') ?: '').toLowerCase()
+            applicationIdSuffix certificate ==~ /[a-f0-9]{64}/ ? '.web.s' + certificate : '.web'
+            buildConfigField 'boolean', 'PUBLIC_NATIVE', 'true'
             // The browser uses authenticated ADB run-as for private commands/reports.
             debuggable true
             signingConfig signingConfigs.web
             matchingFallbacks = ['debug']
         }
     }
-    sourceSets.main {
-        assets.srcDirs = [rootProject.file('../.build/assets')]
-        jniLibs.srcDirs = [rootProject.file('../.build/lib')]
+    buildFeatures { buildConfig true }
+    sourceSets {
+        main { assets.srcDirs = []; jniLibs.srcDirs = [] }
+        debug {
+            assets.srcDirs = [rootProject.file(publicNative ? '../.build/public-native/assets' : '../.build/assets')]
+            jniLibs.srcDirs = [rootProject.file(publicNative ? '../.build/public-native/lib' : '../.build/lib')]
+        }
+        web {
+            assets.srcDirs = [rootProject.file('../.build/public-native/assets')]
+            jniLibs.srcDirs = [rootProject.file('../.build/public-native/lib')]
+        }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

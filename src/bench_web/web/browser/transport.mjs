@@ -89,7 +89,7 @@ export class WebUsbTransport {
     if (!this.adb) throw Error('Headset disconnected. Reconnect and retry to recover this run.');
     const abort = new AbortController(), cancel = () => abort.abort(signal.reason);
     signal?.throwIfAborted(); signal?.addEventListener('abort', cancel, {once: true});
-    const timer = setTimeout(() => abort.abort(Error('Headset command timed out. Wake the headset and retry.')), timeout);
+    const timer = setTimeout(() => abort.abort(Error('The device did not respond. Keep USB connected and retry the connection.')), timeout);
     let process, completed = false;
     try {
       // Tango joins array entries with spaces; shell-quote every argument ourselves.
@@ -165,11 +165,11 @@ export class WebUsbTransport {
     signal?.throwIfAborted(); message('Installing on your headset…');
     // Omitting the path selects stdin. A bare '-' is parsed as an option by
     // Android's install argument parser (including the Quest 3 firmware).
-    const installed = await this.shell(['pm', 'install', '-r', '-t', '-S', String(size)], {data: bytes, signal, timeout: 180000,
+    const installed = await this.shell(['pm', 'install', '-r', '-t', '-d', '-S', String(size)], {data: bytes, signal, timeout: 180000,
       allowFailure: true, onWrite: (sent, total) => message(`Installing on your headset · ${Math.floor(100 * sent / total)}%`)});
     const detail = installed.stderr + installed.stdout;
     if (installed.code || !/\bSuccess\b/.test(installed.stdout)) {
-      if (/UPDATE_INCOMPATIBLE|INCONSISTENT_CERTIFICATES|VERSION_DOWNGRADE/.test(detail)) throw new EvidenceError('The installed web runner has a different signing identity or newer version. It was not removed. Use the matching website release.');
+      if (/UPDATE_INCOMPATIBLE|INCONSISTENT_CERTIFICATES|VERSION_DOWNGRADE/.test(detail)) throw new EvidenceError('The installed runner has a different signing identity. It was not removed. Reload the latest website release to install its separate runner and keep prior reports.');
       throw Error('Headset installation failed. Check available storage and headset permissions, then retry. ' + detail.trim().slice(0, 500));
     }
     if (await this.installedHash(manifest, signal) !== manifest.apk_sha256) throw new EvidenceError('Installed runner verification failed');
@@ -177,13 +177,26 @@ export class WebUsbTransport {
   async readJson(manifest, path, {signal, limit} = {}) {
     const r = await this.shell(['run-as', manifest.package, 'cat', path], {signal, limit, allowFailure: true});
     if (r.code) {
-      if (/No such file/.test(r.stderr)) throw new MissingFile('Waiting for native evidence. Wake the headset and keep the benchmark app open.');
+      if (/No such file/.test(r.stderr)) {
+        const match=/^files\/runs\/(run-[0-9a-f]{32})\/report\.json$/.exec(path);
+        if(match){
+          const diagnostic=await this.shell(['run-as',manifest.package,'cat',`files/runs/${match[1]}/startup-error.json`],{signal,limit:8192,allowFailure:true});
+          if(!diagnostic.code){
+            let issue;try{issue=JSON.parse(diagnostic.stdout);}catch{throw new EvidenceError('Malformed native startup diagnostic');}
+            if(issue?.run_id!==match[1]||typeof issue.error!=='string')throw new EvidenceError('Native startup diagnostic identity mismatch');
+            throw new EvidenceError(issue.error);
+          }
+        }
+        throw new MissingFile('Waiting for the native benchmark. Keep USB connected; the headset can remain unworn.');
+      }
       throw Error(r.stderr.trim() || 'Could not read headset evidence');
     }
     try {return JSON.parse(r.stdout);} catch {throw new EvidenceError('Malformed native JSON evidence');}
   }
   async launchActivity(manifest, key, id, signal) {
-    const r = await this.shell(['am', 'start', '-W', '-n', manifest.package + '/' + manifest.activity, '--es', key, id], {signal, timeout: 30000});
+    // The Activity hands work to a foreground service and immediately finishes.
+    // Waiting for it to display can time out on an unworn headset.
+    const r = await this.shell(['am', 'start', '-n', manifest.package + '/' + manifest.activity, '--es', key, id], {signal, timeout: 30000});
     if (/Error:|Error type/.test(r.stdout)) throw Error('Could not open the headset runner: ' + r.stdout.trim());
   }
   async probe(manifest, signal) {
@@ -194,23 +207,23 @@ export class WebUsbTransport {
       signal?.throwIfAborted();
       try {
         const p = await this.readJson(manifest, `files/profiles/${id}.json`, {signal, limit: 1024 ** 2});
+        if(p?.probe_id===id&&typeof p.error==='string')throw new EvidenceError(p.error);
         if (p?.probe_id !== id || p.profile_version !== 1 || !p.backends || Array.isArray(p.backends)
             || p.runner_revision !== manifest.runner_revision || p.runtime_revision !== manifest.runtime_revision
-            || ['executorch_cpu', 'executorch_vulkan'].some(backend => typeof p.backends[backend]?.compatible !== 'boolean')) {
+            || (manifest.protocol_version===2?['xrgpu_vulkan']:['executorch_cpu', 'executorch_vulkan']).some(backend => typeof p.backends[backend]?.compatible !== 'boolean')) {
           throw new EvidenceError('Native capability identity mismatch. Reload the website for a matched runner.');
         }
         return p;
       } catch (e) {if (!(e instanceof MissingFile)) throw e;}
       await pause(250);
     }
-    throw Error('Capability check timed out. Wake the headset and retry.');
+    throw Error('The native capability check did not respond. Reconnect USB and retry.');
   }
   async launch(manifest, config, signal) {
     if (!runPattern.test(config.run_id)) throw new EvidenceError('Invalid run identity');
     const id = config.run_id;
     const script = `mkdir -p files/commands files/runs/${id} && test ! -e files/runs/${id}/report.json && cat > files/commands/${id}.part && mv files/commands/${id}.part files/commands/${id}.json`;
     await this.shell(['run-as', manifest.package, 'sh', '-c', script], {data: new TextEncoder().encode(JSON.stringify(config)), signal});
-    await this.shell(['input', 'keyevent', 'KEYCODE_WAKEUP'], {signal});
     await this.launchActivity(manifest, 'run_id', id, signal);
   }
   read(manifest, id, filename, signal) {

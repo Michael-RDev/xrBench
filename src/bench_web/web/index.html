@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-transport="webusb">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="Benchmark your XR headset’s GPU with 63 tests of execution time and correctness. Explore results with xrBench, an open source XR benchmark.">
+  <meta name="description" content="Benchmark native xrGPU kernels on your XR device. Measure execution time and correctness across 221 operators, including while the headset is unworn.">
   <title>xrBench — Benchmark your headset’s GPU</title>
   <link rel="stylesheet" href="/bench/style.css"><script type="module" src="/bench/app.js"></script>
 </head>
@@ -12,7 +12,7 @@
 <main id="main" class="shell" tabindex="-1">
   <section class="hero" aria-labelledby="hero-title">
     <div class="hero-copy">
-      <h1 id="hero-title">Benchmark your headset’s GPU.</h1><p class="lede">Measure execution time and check correctness across 63 GPU tests. Help the open source XR community understand real hardware.</p>
+      <h1 id="hero-title">Benchmark your headset’s GPU.</h1><p class="lede">Measure execution time and check correctness across <span id="benchmark-test-count">221</span> native xrGPU operators. You can take off the headset while it runs.</p>
       <div class="hero-actions">
         <button id="run" class="primary" aria-label="Run GPU benchmark" disabled><span id="run-label">Run</span><span id="run-icon" aria-hidden="true">▶</span></button>
         <button id="connection-cancel" class="text-action" type="button" hidden>Cancel</button>
@@ -21,14 +21,13 @@
         <button id="back-headset" class="text-action" type="button" hidden>Back to headset</button>
         <p id="run-status" class="run-status" role="status" hidden></p>
         <p id="report-delivery-status" class="run-status" role="status" hidden></p>
-        <div id="notice" class="notice" role="status" hidden><span id="notice-message"></span> <button id="retry-status" class="text-action" type="button">Retry</button>
-          <details id="setup-help" hidden><summary>Local runner setup</summary><p>Build the native benchmark app on this computer, then select Retry. With the repository toolchain and exported workloads ready, run:</p><code>uv run --extra export --group dev python -m engine.build</code><p>The benchmark service installs the app on your selected device when you run.</p></details></div>
+        <div id="notice" class="notice" role="status" hidden><span id="notice-message"></span> <button id="retry-status" class="text-action" type="button">Retry</button></div>
       </div>
       <section class="device-panel" aria-label="Connected device">
         <span id="device-demo-badge" class="demo-tag" hidden>Simulated device</span>
         <div id="device-status" class="device-status" role="status" aria-live="polite">
           <select id="device-picker" aria-label="Device to benchmark" hidden></select><p id="device-name">Looking for your headset</p>
-          <p id="device-connection" class="device-connection" hidden></p><p id="device-chip" class="device-chip"></p><p id="device-help">Checking the local benchmark service…</p>
+          <p id="device-connection" class="device-connection" hidden></p><p id="device-chip" class="device-chip"></p><p id="device-help">Connect your headset by USB, then press Run. You can take it off after approving USB debugging.</p>
           <button id="device-retry" class="text-action" type="button" hidden>Retry connection</button>
         </div>
       </section>
@@ -62,10 +61,10 @@
   </section>
   <details id="previous-runs" class="previous-runs" hidden><summary>Previous runs</summary><ul id="previous-runs-list"></ul></details>
   <section id="results" class="results" aria-labelledby="results-title" hidden>
-    <div class="results-heading"><div><p class="eyebrow">Measured on your device</p><h2 id="results-title">Every layer. On your silicon.</h2></div><a id="results-link" href="#layer-results">View case results ↓</a></div>
+    <div class="results-heading"><div><p class="eyebrow">Measured on your device</p><h2 id="results-title">Every operator. On your device.</h2></div><a id="results-link" href="#layer-results">View case results ↓</a></div>
     <div id="result-processors" class="result-processors" aria-label="Processor results" hidden></div><button id="download-session" type="button" class="text-action" hidden>Download results JSON</button><div class="run-overview">
       <div class="run-current"><span id="run-phase" class="run-phase">Preparing</span><p id="current-layer" role="status" aria-live="polite"></p><p id="run-context" class="run-context"></p></div>
-      <div class="run-completion"><span id="completion-count"></span><progress id="suite-progress" value="0" max="63" aria-label="Benchmark cases processed"></progress><div id="result-counts" class="result-counts"></div></div>
+      <div class="run-completion"><span id="completion-count"></span><progress id="suite-progress" value="0" max="221" aria-label="Benchmark cases processed"></progress><div id="result-counts" class="result-counts"></div></div>
     </div>
     <p class="results-note">Each layer shows its median latency range across measured input shapes. Expand a layer for individual cases. Warmups and correctness checks are excluded.</p>
     <div id="layer-results" class="layer-results"></div>
