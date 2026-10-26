@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="320" viewBox="0 0 1000 320" role="img" aria-labelledby="title description">
+  <title id="title">xrBench — Native GPU benchmarking for XR devices.</title>
+  <desc id="description">The xrBench wordmark and tagline on an ivory background, beside a simple sage lynx with tufted ears and a calm expression.</desc>
+
+  <rect width="1000" height="320" rx="16" fill="#fafaf6"/>
+
+  <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif" fill="#28312c">
+    <text x="52" y="139" font-size="90" letter-spacing="-4"><tspan font-weight="700">xr</tspan><tspan font-weight="400">Bench</tspan></text>
+    <circle cx="407" cy="79" r="6" fill="#778f67"/>
+    <text x="56" y="204" font-size="34" fill="#536a50">
+      <tspan x="56">Native GPU benchmarking</tspan>
+      <tspan x="56" dy="44">for XR devices.</tspan>
+    </text>
+  </g>
+
+  <g transform="translate(663 36)" stroke="#536a50" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Tapered ear tufts and a broad cheek ruff distinguish the lynx. -->
+    <path d="M43 48 L34 9 L45 26 L47 5 L53 49 Z M207 48 L216 9 L205 26 L203 5 L197 49 Z" fill="#536a50" stroke="none"/>
+    <path d="M48 104 L39 42 Q38 35 44 39 L84 73 Q125 55 166 73 L206 39 Q212 35 211 42 L202 104 C215 117 224 132 233 147 L217 145 L230 164 L209 161 L215 181 L196 176 C183 202 155 224 125 232 C95 224 67 202 54 176 L35 181 L41 161 L20 164 L33 145 L17 147 C26 132 35 117 48 104 Z" fill="#edf2e7"/>
+
+    <!-- Soft inner ears and open facial planes keep the mark quiet. -->
+    <path d="M54 58 L61 100 L79 84 Z M196 58 L189 100 L171 84 Z" fill="#cfdcc5" stroke="none"/>
+    <path d="M50 122 C63 109 83 108 100 120 L113 155 M200 122 C187 109 167 108 150 120 L137 155" fill="none" stroke="#a5b798"/>
+    <path d="M65 133 Q81 123 98 135 Q81 147 65 133 Z M185 133 Q169 123 152 135 Q169 147 185 133 Z" fill="#fafaf6" stroke-width="2"/>
+    <path d="M82 129 L82 138 M168 129 L168 138" fill="none" stroke-width="4"/>
+
+    <!-- A short muzzle and compact nose retain the lynx's feline proportions. -->
+    <path d="M125 164 C111 150 91 153 87 169 C84 182 95 193 108 191 Q119 190 125 184 Q131 190 142 191 C155 193 166 182 163 169 C159 153 139 150 125 164 Z" fill="#fafaf6" stroke="none"/>
+    <path d="M115 161 Q125 157 135 161 L128 170 Q125 173 122 170 Z" fill="#536a50" stroke="none"/>
+    <path d="M125 171 L125 181 M125 181 Q117 188 108 183 M125 181 Q133 188 142 183" fill="none" stroke-width="2"/>
+    <path d="M92 166 L63 160 M91 175 L60 176 M158 166 L187 160 M159 175 L190 176" fill="none" stroke="#8fa080" stroke-width="1.75"/>
+    <path d="M113 206 Q125 211 137 206" fill="none" stroke="#a5b798" stroke-width="2"/>
+  </g>
+</svg>
