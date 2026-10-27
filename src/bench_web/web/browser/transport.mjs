@@ -230,6 +230,59 @@ export class WebUsbTransport {
     if (!runPattern.test(id) || !['report.json', 'progress.json'].includes(filename)) throw new EvidenceError('Invalid evidence path');
     return this.readJson(manifest, `files/runs/${id}/${filename}`, {signal});
   }
+  async diagnostics(manifest, id) {
+    if (!runPattern.test(id)) throw new EvidenceError('Invalid evidence identity');
+    const result = {run_id: id, package: manifest.package, apk_sha256: manifest.apk_sha256,
+      started_at: new Date().toISOString(), commands: {}};
+    try {
+      const host_started_at = new Date().toISOString();
+      const clock = await this.shell(['date', '+%s%3N'], {timeout: 5000, limit: 128});
+      const host_finished_at = new Date().toISOString(), milliseconds = clock.stdout.trim();
+      if (!/^\d{13}$/.test(milliseconds)) throw Error('Device did not return milliseconds');
+      result.clock = {host_started_at, host_finished_at, device_at: new Date(Number(milliseconds)).toISOString()};
+    } catch(error) {result.clock_error = error.message;}
+    // Use the current WebUSB owner. Diagnostics never start a host ADB server.
+    try {
+      for (let attempt = 0; attempt < 8; attempt++) {
+        result.lifecycle = await this.readJson(manifest, `files/runs/${id}/lifecycle.json`, {limit: 2 * 1024 ** 2});
+        if (result.lifecycle.events?.some(e => e.event === 'service_destroyed')) break;
+        await pause(250);
+      }
+    }
+    catch (error) {result.lifecycle_error = error.message;}
+    for (const [key, args] of Object.entries({service: ['dumpsys', 'activity', 'services', manifest.package],
+      power: ['dumpsys', 'power'], thermal: ['dumpsys', 'thermalservice'],
+      notification: ['dumpsys', 'notification', manifest.package]})) {
+      const started_at = new Date().toISOString();
+      try {result.commands[key] = {...await this.shell(args, {allowFailure: true, timeout: 5000, limit: 2 * 1024 ** 2}),
+        args, started_at, finished_at: new Date().toISOString()};}
+      catch (error) {result.commands[key] = {args, started_at, finished_at: new Date().toISOString(), error: error.message};}
+    }
+    result.captured_at = new Date().toISOString();
+    return result;
+  }
+  async installationSnapshot(manifest) {
+    const result = {kind: 'xrbench.installation-snapshot', package: manifest.package,
+      captured_at: new Date().toISOString(), apk_sha256: await this.installedHash(manifest)};
+    if (!result.apk_sha256) return {...result, installed: false};
+    result.installed = true;
+    result.connection_id = (await sha256(new TextEncoder().encode(this.device.serial))).slice(0, 24);
+    const dump = await this.shell(['dumpsys', 'package', manifest.package], {timeout: 5000, limit: 2 * 1024 ** 2});
+    const version = /\bversionCode=(\d+)\b/.exec(dump.stdout);
+    if (!version) throw Error('Cannot verify installed version');
+    result.version_code = Number(version[1]); result.package_dump = dump.stdout;
+    const prefs = await this.shell(['run-as', manifest.package, 'cat', 'shared_prefs/device-profile.xml'], {allowFailure:true,limit:8192});
+    result.installation_id = /<string name=["']id["']>([a-f0-9-]{36})<\/string>/.exec(prefs.stdout)?.[1] || null;
+    const command = 'for file in files/runs/run-*/report.json; do if [ -f "$file" ]; then sha256sum "$file"; fi; done';
+    const reports = await this.shell(['run-as',manifest.package,'sh','-c',command], {limit:2 * 1024 ** 2});
+    result.reports = reports.stdout.trim() ? reports.stdout.trim().split('\n').map(line => {
+      const match = /^([a-f0-9]{64})\s+(files\/runs\/run-[a-f0-9]{32}\/report\.json)$/.exec(line);
+      if (!match) throw Error('Invalid saved report inventory');
+      return {path:match[2],sha256:match[1]};
+    }) : [];
+    result.captured_at = new Date().toISOString();
+    return result;
+  }
   async isRunning(manifest, signal) {
     const result = await this.shell(['pidof', manifest.package], {signal, allowFailure: true});
     if (result.code === 1 && !result.stdout.trim() && !result.stderr.trim()) return false;

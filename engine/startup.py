@@ -116,12 +116,22 @@ def prepare_database(*, start_container=True):
             break
         except Exception:
             if time.monotonic() >= deadline:
-                raise DatabaseStartupError('Could not connect to PostgreSQL. Check the database address, port, and original credentials in engine/.env or XRGPU_DATABASE_URL.') from None
+                raise DatabaseStartupError(
+                    'Could not connect to PostgreSQL. Check the address, port and original credentials '
+                    'in engine/.env or XRGPU_DATABASE_URL. Remote databases require verified TLS and '
+                    'trusted CA configuration; see docs/database-hosting.md.'
+                ) from None
             time.sleep(1)
-    print('Applying pending SQL migrations…', flush=True)
+    print('Checking the existing PostgreSQL schema…' if external else 'Applying pending SQL migrations…', flush=True)
     try:
-        store.migrate()
+        if not external:
+            store.migrate()
         store.health()
     except Exception:
-        raise DatabaseStartupError('Database setup failed. Check SQL permissions and engine/db/migrations/. Existing reports are preserved; rerun after fixing the database issue.') from None
+        raise DatabaseStartupError(
+            'Database schema is not ready. Apply migrations separately with administrative credentials '
+            '(python -m engine.db.migrate); see docs/database-hosting.md. Existing reports are preserved.'
+            if external else
+            'Database setup failed. Check SQL permissions and engine/db/migrations/. Existing reports are preserved; rerun after fixing the database issue.'
+        ) from None
     return store

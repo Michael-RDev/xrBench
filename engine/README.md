@@ -33,6 +33,13 @@ Keep `engine/.env`; existing database credentials must be restored if lost.
 | `--no-docker` | Use a running database and apply migrations |
 | `XRGPU_DATABASE_URL` | Use an external database; skip Docker and local credential creation |
 
+External databases must already have the schema applied; normal external startup
+only checks readiness. See [database hosting](../docs/database-hosting.md) for
+verified TLS, separate administrative migrations, and restricted runtime roles.
+Before publishing a website or receiver, read the
+[hosting security review](../docs/security-review.md). Keep the local developer
+server private because its APIs control attached devices and access saved reports.
+
 ### Manual database setup
 
 For a new database, copy `engine/.env.example` to `engine/.env` and set a password.
@@ -162,7 +169,10 @@ Use the controls and reports in [hardware qualification](../docs/workflows/devic
 Local originals are saved as `engine/.state/runs/<run-id>/native-report.json` before
 PostgreSQL submission. Database failures queue retries without rerunning workloads;
 downloads still work. Reports exclude USB serials, account/email data, camera images,
-and pose traces. Hosted uploads use the [browser receiver](../src/bench_web/README.md#automatic-report-delivery).
+and pose traces. Hosted uploads use the
+[same-origin server relay](../docs/report-receiver-hosting.md), with no visitor
+email or benchmark sign-in. JSON downloads remain available; hosted activation
+and live verification are tracked in the [deployment handoff](../docs/deployment-readiness.md).
 
 To inspect an original report without a device or database:
 

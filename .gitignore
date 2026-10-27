@@ -16,6 +16,8 @@ hs_err_pid*.log
 node_modules/
 dist/
 .env
+.env.hosting
+.env.hosting.local
 *.log
 supabase/.temp/
 supabase/functions/submit-report/receiver.mjs

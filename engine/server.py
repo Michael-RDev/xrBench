@@ -1,8 +1,7 @@
 import hmac
-import json
 import mimetypes
 import secrets
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -12,6 +11,8 @@ from engine.paths import ROOT
 from engine.reports import RUN_ID, canonical
 from engine.benchmark_sessions import SESSION_ID
 from engine.devices import CATALOG
+from engine.local_http import LocalHTTPServer, LocalRequestMixin, RequestError, read_json_body
+from engine.report_json import load_report_json
 
 BASE = ROOT / "src"
 STATS = BASE / "stats_for_nerds/web"
@@ -20,7 +21,7 @@ SHARED = Path(__file__).with_name("web")
 
 
 def handler(controller, token):
-    class Handler(BaseHTTPRequestHandler):
+    class Handler(LocalRequestMixin, BaseHTTPRequestHandler):
         def log_message(self, *_): pass
 
         def respond(self, status, data, content_type="application/json"):
@@ -103,10 +104,7 @@ def handler(controller, token):
         def do_POST(self):
             if not self.authorized():self.respond(403,dict(error="Local session required"));return
             try:
-                if self.headers.get("Content-Type","").split(";")[0]!="application/json":raise ValueError("JSON required")
-                size=int(self.headers.get("Content-Length","0"))
-                if not 0<size<=65536:raise ValueError("Invalid request size")
-                body=json.loads(self.rfile.read(size))
+                body=load_report_json(read_json_body(self,65536))
                 if not isinstance(body,dict):raise ValueError("Expected JSON object")
                 path=urlsplit(self.path).path
                 if path=="/api/runs":self.respond(202,controller.create(body));return
@@ -120,6 +118,8 @@ def handler(controller, token):
                     if parts[3]=="stop":self.respond(200,controller.stop(parts[2]));return
                     if parts[3]=="retry":controller.submit(parts[2]);self.respond(200,controller.view(parts[2]));return
                 self.respond(404,dict(error="Not found"))
+            except RequestError as error:
+                self.respond(error.status,dict(error=str(error)))
             except (ValueError,TypeError) as error:self.respond(400,dict(error=str(error) or 'Invalid run or watch request'))
             except FileNotFoundError:self.respond(409,dict(error="Build the native benchmark APK before running."))
             except KeyError:self.respond(404,dict(error="Run not found"))
@@ -128,4 +128,4 @@ def handler(controller, token):
 
 
 def create_server(controller, port=8765):
-    return ThreadingHTTPServer(("127.0.0.1",port),handler(controller,secrets.token_urlsafe(32)))
+    return LocalHTTPServer(("127.0.0.1",port),handler(controller,secrets.token_urlsafe(32)))

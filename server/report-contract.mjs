@@ -1,24 +1,53 @@
 import {canonical, distribution, sha256, validateManifest, validateReport} from '../src/bench_web/web/browser/evidence.mjs';
 
 export const MAX_REPORT_BYTES = 32 * 1024 * 1024;
+export const REPORT_LIMITS = Object.freeze({depth: 32, nodes: 750000, string: 65536, array: 25000, keys: 256});
+export class ReportLimitError extends Error {}
 const encoder = new TextEncoder();
 const spans = new Set(['single graph, common queue timestamp domain', 'single dispatch sequence, common queue timestamp domain']);
 const targets = new Set(['headset', 'glasses', 'compute_puck', 'phone', 'unknown']);
 
-function rejectSimulation(report) {
-  const pending = [report];
+function checkStructure(report) {
+  const pending = [[report, 0]]; let nodes = 0;
   while (pending.length) {
-    const item = pending.pop();
+    const [item, depth] = pending.pop();
+    if (++nodes > REPORT_LIMITS.nodes || depth > REPORT_LIMITS.depth ||
+        typeof item === 'string' && item.length > REPORT_LIMITS.string)
+      throw new ReportLimitError('Report exceeds the JSON complexity limit.');
     if (!item || typeof item !== 'object') continue;
     if (item.simulated === true || item.source === 'simulated' || item.presentation_source === 'simulated')
       throw Error('Demo results cannot be submitted.');
-    pending.push(...Object.values(item));
+    const keys = Object.keys(item);
+    if (Array.isArray(item) ? item.length > REPORT_LIMITS.array : keys.length > REPORT_LIMITS.keys)
+      throw new ReportLimitError('Report collection is too large.');
+    for (const key of keys) {
+      if (key.length > REPORT_LIMITS.string) throw new ReportLimitError('Report member name is too long.');
+      pending.push([item[key], depth + 1]);
+    }
   }
 }
 
 export async function prepareSubmission(payload, manifests) {
-  const report = JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(payload));
-  rejectSimulation(report);
+  if (!(payload instanceof Uint8Array) || !payload.byteLength || payload.byteLength > MAX_REPORT_BYTES)
+    throw new ReportLimitError('Report is too large or empty.');
+  const text = new TextDecoder('utf-8', {fatal: true}).decode(payload);
+  // Bound nesting before allocating a deeply nested JSON tree. String escapes
+  // must be skipped so braces in diagnostics never count as containers.
+  let depth = 0, quoted = false, escaped = false;
+  for (const character of text) {
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') quoted = false;
+    } else if (character === '"') quoted = true;
+    else if (character === '{' || character === '[') {
+      if (++depth > REPORT_LIMITS.depth) throw new ReportLimitError('Report nesting is too deep.');
+    } else if (character === '}' || character === ']') depth--;
+  }
+  const report = JSON.parse(text);
+  // Run this iterative check before validators and canonicalization recurse over
+  // untrusted extra fields. Direct callers receive the same limits as HTTP.
+  checkStructure(report);
   const config = report?.configuration;
   const manifest = manifests.find(m => m.apk_sha256 === config?.apk_sha256);
   if (!manifest) throw Error('Unknown runner release.');

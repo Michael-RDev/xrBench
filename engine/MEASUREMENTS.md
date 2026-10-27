@@ -2,7 +2,7 @@
 
 [Documentation](../docs/README.md) · [Development](README.md) · [Devices](../docs/workflows/device-onboarding.md)
 
-Missing measurements mean unavailable, not zero. Never treat browser progress or
+Missing measurements mean unavailable. Never treat browser progress or
 elapsed time as GPU utilization. CPU/GPU results have no combined score.
 
 - [Presets](#presets-and-xr-timing)

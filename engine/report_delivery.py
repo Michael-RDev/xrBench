@@ -11,8 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from engine.reports import digest, validate
+from engine.report_json import MAX_REPORT_BYTES, load_report_json
 
-MAX_REPORT_BYTES = 32 * 1024 * 1024
 
 
 def simulated(value):
@@ -31,7 +31,7 @@ class LocalReportSink:
         if not 0 < len(payload) <= MAX_REPORT_BYTES:
             raise ValueError('Report exceeds the local receiver size limit')
         try:
-            report = json.loads(payload)
+            report = load_report_json(payload)
             if simulated(report):
                 raise ValueError('Simulated reports cannot be submitted')
             validate(report)

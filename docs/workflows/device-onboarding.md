@@ -162,13 +162,16 @@ Preserve schemas/statuses; never hardcode `validated` or bypass capability check
 
 ### 5. Verify software and the public website on hardware
 
-Prepare [native builds](../../engine/README.md#build-the-native-app) and
-[signing](../../src/bench_web/README.md#build-and-sign-maintainers-only):
+For the current browser runner, follow the
+[221-operator Quest 3 validation campaign](quest3-validation.md). Local validation
+qualifies localhost and its PostgreSQL receiver; the public HTTPS checks below
+remain separate onboarding gates. Prepare the signed browser release using its
+existing persistent signing identity:
 
 ```sh
 npm test
 uv run --group dev python -m pytest -q
-uv run --extra export --group dev python -m engine.build --web
+uv run python -c 'from engine.local_release import ensure_release; ensure_release()'
 npm run build
 node --experimental-vm-modules scripts/verify-web.mjs dist
 ```
@@ -178,22 +181,28 @@ or the developer APK. Verify packaged catalog, build IDs, hashes, certificate, a
 Local preview isn't the public website check: use the intended authorized HTTPS
 origin and receiver, or mark hosting blocked.
 
-- [ ] Use matching `org.xrgpu.benchmarks.web` in Chrome/Edge; record host/browser,
+- [ ] Use the exact signing-derived `package` from `dist/runner/manifest.json`
+  in Chrome/Edge; record host/browser,
   drivers/permissions, firmware, and clean/configured-host status.
 - [ ] Authorize USB/debugging; keep the runner awake/visible and record thermal/charging
   conditions. Release USB owners without killing apps or uninstalling packages.
 - [ ] Check recognition, target, artwork, and independent capabilities; don't bypass guards.
-- [ ] Run 63 GPU cases: `executorch_vulkan`, isolated, Standard, 20 warmups,
-  100 samples per successful case, automatic calibration, trace. Verify report settings.
-- [ ] Require all 63 correct with valid samples. Failed, skipped, interrupted, or
-  invalid cases fail the suite; missing timing isn't zero.
+- [ ] Account for all 221 native operators: `xrgpu_vulkan`, isolated, Standard,
+  20 warmups, 100 samples per supported case, no calibration, GPU timestamps.
+  Verify the frozen schema-3 report configuration and typed/shader identities.
+- [ ] Require all supported operators correct before/after timing with valid
+  samples. Preserve explicit unsupported reasons as exclusions; they never count
+  as passes or establish full-suite device support. Failures and interruptions
+  fail correctness readiness; missing timing isn't zero.
 - [ ] Test install/reuse/update, denied permissions/retry, multiple devices,
   exclusive ownership, and busy-USB recovery. Mark untested checks pending/blocked.
 - [ ] Test Stop during preparation/execution, refresh, disconnect/reconnect, and
   disconnected cancellation. Recover the same ID; never repeat an uncertain launch.
   Keep failed, canceled, and partial reports.
-- [ ] Export schema-1 `session`/`reports`; validate copies of original schema-2 reports
-  with `engine.reports.validate`/`summarize`. Don't alter originals or validate the wrapper.
+- [ ] Export schema-1 `session`/`reports` with optional `validation` evidence;
+  validate copies of original schema-3 reports against the frozen configuration
+  and catalog using `engine.native_reports.validate`. Keep older schema-2 model
+  reports on their historical workflow. Never alter originals or validate the wrapper.
 - [ ] Test delivery/failure recovery against the authorized receiver. Require
   `stored: true`, matching `run_id`, and exact-byte `payload_sha256`.
   Failures must not rerun work or block controls.

@@ -5,7 +5,8 @@
   "scripts": {
     "test": "node --experimental-vm-modules --test src/stats_for_nerds/tests/test_web.mjs src/bench_web/tests/*.mjs server/tests/*.mjs",
     "build": "node scripts/build-web.mjs",
-    "build:receiver": "node scripts/build-receiver.mjs"
+    "build:receiver": "node scripts/build-receiver.mjs",
+    "verify:hosting": "node scripts/verify-hosting.mjs"
   },
   "devDependencies": {
     "esbuild": "0.28.2",

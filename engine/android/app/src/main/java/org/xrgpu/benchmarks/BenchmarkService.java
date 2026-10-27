@@ -18,6 +18,7 @@ import android.util.Log;
 import java.io.File;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 /** Owns isolated compute independently of the headset's display/activity lifecycle. */
@@ -33,20 +34,42 @@ public final class BenchmarkService extends Service {
     PowerManager.WakeLock wake;
     long lastNotification;
     boolean finished;
-    final Runnable timeout=()->{cancel();if(worker!=null)worker.interrupt();};
+    final JSONArray lifecycle=new JSONArray();
+    long began;
+    String previousEnvironment="";
+    final Runnable timeout=()->{event("deadline_reached",null);cancel("Native benchmark deadline exceeded","deadline");if(worker!=null)worker.interrupt();};
+    synchronized void event(String name,JSONObject details){
+        if(runId==null)return;
+        try{
+            JSONObject entry=new JSONObject().put("event",name).put("at",java.time.Instant.now().toString())
+                .put("elapsed_ms",SystemClock.elapsedRealtime()-began);
+            if(details!=null)entry.put("details",details);
+            lifecycle.put(entry);
+            Fileset.write(new File(getFilesDir(),"runs/"+runId+"/lifecycle.json"),
+                new JSONObject().put("run_id",runId).put("events",lifecycle));
+        }catch(Exception error){Log.e("xrBench","Cannot preserve service lifecycle",error);}
+    }
     final Runnable environment=new Runnable(){public void run(){
         if(runId==null)return;
         try{PowerManager power=getSystemService(PowerManager.class);
             JSONObject state=new JSONObject().put("run_id",runId).put("thermal_status",power.getCurrentThermalStatus())
                 .put("charging",getSystemService(BatteryManager.class).isCharging()).put("display_interactive",power.isInteractive());
             if(power.getCurrentThermalStatus()>=PowerManager.THERMAL_STATUS_SEVERE)state.put("stop_reason","Thermal state severe; measurements stopped");
+            String identity=state.toString();
+            if(!identity.equals(previousEnvironment)){event("environment",new JSONObject(identity));previousEnvironment=identity;}
+            state.put("at",java.time.Instant.now().toString());
             Fileset.write(new File(getFilesDir(),"runs/"+runId+"/environment.json"),state);
         }catch(Exception error){Log.e("xrBench","Cannot record benchmark environment",error);}
         main.postDelayed(this,1000);
     }};
-    void cancel(){
+    void cancel(String reason,String source){
         cancelled.set(true);
-        if(runId!=null)try{File file=new File(getFilesDir(),"runs/"+runId+"/cancel");file.getParentFile().mkdirs();file.createNewFile();}catch(IOException error){Log.e("xrBench","Cannot preserve cancellation",error);}
+        try{event("stop_requested",new JSONObject().put("source",source).put("reason",reason));}
+        catch(Exception error){Log.e("xrBench","Cannot record Stop source",error);}
+        if(runId!=null)try{
+            Fileset.write(new File(getFilesDir(),"runs/"+runId+"/cancel-reason.json"),new JSONObject().put("reason",reason));
+            File file=new File(getFilesDir(),"runs/"+runId+"/cancel");file.getParentFile().mkdirs();file.createNewFile();
+        }catch(Exception error){Log.e("xrBench","Cannot preserve cancellation",error);}
     }
 
     @Override public void onCreate(){
@@ -79,7 +102,7 @@ public final class BenchmarkService extends Service {
     @Override public int onStartCommand(Intent intent,int flags,int startId){
         if(intent==null){stopSelf(startId);return START_NOT_STICKY;}
         if(CANCEL.equals(intent.getAction())){
-            if(runId!=null&&runId.equals(intent.getStringExtra("run_id")))cancel();
+            if(runId!=null&&runId.equals(intent.getStringExtra("run_id")))cancel("Canceled by user","notification");
             return START_NOT_STICKY;
         }
         // An uncertain browser launch is recovered, never replayed on Android restart.
@@ -96,6 +119,8 @@ public final class BenchmarkService extends Service {
                 JSONObject command=Fileset.read(new File(getFilesDir(),"commands/"+id+".json"));
                 if(!"isolated".equals(command.getString("mode")))throw new IllegalArgumentException("Foreground worker requires isolated compute");
                 runId=id;
+                began=SystemClock.elapsedRealtime();
+                event("service_started",null);
             }
             Notification notification=notification(probe!=null?"Checking device capabilities":"You can take off the headset. Keep USB connected.");
             if(Build.VERSION.SDK_INT>=34)startForeground(NOTIFICATION,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
@@ -104,6 +129,7 @@ public final class BenchmarkService extends Service {
             wake=power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"xrBench:benchmark");
             wake.setReferenceCounted(false);
             wake.acquire(MAX_DURATION_MS+60000);
+            event("wake_acquired",null);
             main.postDelayed(timeout,MAX_DURATION_MS);
             if(runId!=null)environment.run();
             worker=new Thread(()->{
@@ -118,7 +144,7 @@ public final class BenchmarkService extends Service {
                         new JSONObject().put("probe_id",probe).put("error","Device capability check failed: "+error));}catch(Exception ignored){}
                     else if(id!=null)try{Fileset.write(new File(getFilesDir(),"runs/"+id+"/startup-error.json"),
                         new JSONObject().put("run_id",id).put("error","Native benchmark could not start: "+error));}catch(Exception ignored){}
-                }finally{main.post(()->finish(startId));}
+                }finally{event("worker_finished",null);main.post(()->finish(startId));}
             },"xrbench-isolated-benchmark");
             worker.start();
         }catch(Exception|LinkageError error){
@@ -129,19 +155,22 @@ public final class BenchmarkService extends Service {
         return START_NOT_STICKY;
     }
     void finish(int startId){
+        if(finished)return;
         finished=true;
         main.removeCallbacks(timeout);
         main.removeCallbacks(environment);
-        if(wake!=null&&wake.isHeld())wake.release();
+        if(wake!=null&&wake.isHeld()){wake.release();event("wake_released",null);}
         stopForeground(STOP_FOREGROUND_REMOVE);
+        event("service_finished",null);
         stopSelf();
     }
     @Override public void onDestroy(){
-        if(!finished)cancel();
+        if(!finished)cancel("Service destroyed before completion","service_destroyed");
         main.removeCallbacks(timeout);
         main.removeCallbacks(environment);
         if(worker!=null)worker.interrupt();
-        if(wake!=null&&wake.isHeld())wake.release();
+        if(wake!=null&&wake.isHeld()){wake.release();event("wake_released",null);}
+        event("service_destroyed",null);
         super.onDestroy();
     }
     @Override public IBinder onBind(Intent intent){return null;}

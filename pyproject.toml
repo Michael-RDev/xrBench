@@ -9,7 +9,12 @@ dependencies = ["numpy>=2.0,<3", "pyyaml>=6,<7", "psycopg[binary]>=3.2,<4"]
 export = ["executorch==1.4.1"]
 
 [dependency-groups]
-dev = ["pytest>=8,<9", "ruff>=0.12,<1", "cmake>=3.31,<4", "ninja>=1.12,<2"]
+dev = ["pytest>=9.0.3,<10", "ruff>=0.12,<1", "cmake>=3.31,<4", "ninja>=1.12,<2"]
+
+[tool.uv]
+# Security floors for transitive export/build dependencies. These constraints
+# do not install optional export dependencies into the runtime environment.
+constraint-dependencies = ["certifi>=2026.10.19", "filelock>=4.2.1", "setuptools>=84.1.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["engine/tests", "src/stats_for_nerds/tests"]

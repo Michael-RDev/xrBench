@@ -61,6 +61,117 @@ Software Vulkan artifacts under `artifacts/conformance/public-native-*` retain
 setup failures and subsequent numerical checks separately. They cannot establish
 physical GPU support or satisfy these headset gates.
 
+### Campaign evidence review — 2026-10-26
+
+The review reproduced false passes from an unrelated installation file, a completed
+run without recovery evidence, an idle/empty 30-minute thermal report, and a
+deadline/destruction event presented as notification Stop. These paths now fail.
+
+- Installation requires actual before/after snapshots, observed version direction,
+  unchanged saved-report hashes and installation identity. Update runner requires
+  an unfinished old checkpoint retired before a distinct final-candidate launch.
+- Recovery requires original running and terminal exports, ordered interruption/
+  reconnection or document refresh, and preserved samples, correctness and provenance.
+  Duplicate launch events and conflicting run content are rejected across gates.
+- Native samples and lifecycle records carry coherent UTC/monotonic timestamps.
+  A bounded USB clock calibration correlates operator/browser and device time.
+  Removal requires an actual display transition and later display-off GPU samples.
+- Notification Stop records its source. Cleanup checks ordered lifecycle events
+  plus correctly scoped, post-cleanup OS dumps that show no active resources.
+  Exit code zero alone is insufficient. Thermal time counts measured native calls,
+  excludes idle preparation, and cannot double-count overlapping runs.
+- Correctness requires every expected output's before/after verdict, verified
+  shader identities, supported platform/profile and stable conditions. Recovery
+  may preserve a charging transition while withholding its timing observations.
+- Delivery checks immutable bytes, exact endpoint, ordered page-specific retry
+  history, and an independent timestamped repeat exchange. Authentication failures
+  and invalid receipts cannot substitute for outage recovery. PostgreSQL checks
+  native JSON, indexed run metadata and every result column in one read-only,
+  repeatable-read transaction.
+- Website identity is independent of APK identity: actual HTML/JS/CSS bytes are
+  frozen and matched to sessions, browser events and delivery history. A later
+  website cannot reuse a previous site's physical qualification.
+
+Review verification: **74 assessor tests passed**, including adversarial and positive
+scenarios; **594 Python tests passed, 52 skipped**; **182 browser tests passed**;
+**25 PostgreSQL/native HTTP tests passed, 1 skipped**; **7 native software Vulkan
+tests passed**, including all **221 operator fixtures** with new timestamps/warmup
+measurements. JVM Stop-source checks, the signed APK build, artifact hashes,
+production-bundle verification, Ruff and `git diff --check` passed. Counts include
+the concurrent workspace changes present when checked; skipped deployment/role
+checks do not establish those deployments.
+
+The reviewed candidate is version **13**, APK SHA-256
+`002021874879234c8e05b9eef65de330c97e0ef7cb29aca9da9f679bb9567167`;
+website SHA-256 is
+`3911c21f7fe888620f6b63deb033445aae99729c20f330d49d0ee174ed036c89`.
+Logs and the review summary are in `artifacts/conformance/quest3-assessor-review/`.
+The fresh private attempt is
+`engine/.state/device-onboarding/quest-3/assessor-review-2026-10-26-final/`.
+**All 22 physical gates remain blocked**. Older preparation attempts are retained;
+their missing evidence must not be filled in by rewriting originals. The assessor
+checks consistency of original exports and named operator attestations; it cannot
+authenticate hardware or prevent deliberate fabrication of all evidence.
+
+### Quest 3 campaign preparation — 2026-10-26
+
+The [current hardware campaign](docs/workflows/quest3-validation.md) uses all 221
+native operators and schema-3 reports. `python -m engine.headset_validation init`
+freezes a signed release and creates a private checklist; `assess` checks original
+evidence, operator observations, release/device identity, receipts, and optional
+independent PostgreSQL reads. Neither command launches or uploads a benchmark.
+
+The runner now records timestamped preparation, warmup, execution, and readback
+transitions. Interrupted checkpoints retain current-case samples without counting
+the unfinished case as completed or passed. Optional browser export metadata keeps
+service lifecycle/OS diagnostics, launch/recovery events, delivery retry history,
+receipts, and the exact submitted body after acknowledgment. Old exports remain
+readable; missing evidence cannot be reconstructed into a passing physical gate.
+
+Measured checks on the current shared working tree, including concurrent
+database/receiver changes:
+
+- Python regressions: **534 passed, 23 skipped** with local HTTP sockets enabled.
+- Browser/receiver regressions: **153 passed**.
+- PostgreSQL/native HTTP integration: **20 passed, 1 skipped**. The skipped
+  container-recreation check remains opt-in; disposable test databases preserve
+  application data. Stored native JSON, receipt digest, and individual result rows
+  were independently checked, including tampered-row rejection and input immutability.
+- Native software Vulkan: **7 passed**, including **221/221 operator fixtures**,
+  stage markers, Stop in preparation/warmup/execution, an accelerated test deadline,
+  the thermal-stop control path, and abrupt process loss with an in-flight
+  checkpoint. These use SwiftShader, one warmup and one timed sample, and explicit
+  software-only flags. The production validator rejected that software report.
+- JVM checks exercised the actual service with Android doubles: completion,
+  startup failure, cancellation, deadline, destruction, and idempotent cleanup.
+  This does not establish Android OS behavior on a headset.
+- The final signed Android release built successfully. APK/manifest, embedded
+  asset inventory, all **315 SPIR-V** files, and all four packaged native libraries
+  matched. The existing signing certificate was preserved. Production-bundle USB
+  chooser cancellation, report retry/delivery, and deployment-prefix checks passed.
+- New Python modules passed Ruff; `git diff --check` passed.
+
+The final preparation candidate is version **8**, APK SHA-256
+`582a6fe95f604d2bf3331fd8238718454158b8e888254a3e8e3599c3c68ffa54`.
+Original logs, software reports, and the verification summary are under
+`artifacts/conformance/quest3-readiness-preparation/`. The earlier native harness
+timeout is retained separately from the final passing run.
+
+The private attempt is
+`engine/.state/device-onboarding/quest-3/readiness-preparation-2026-10-26-current/`.
+Its frozen release and `assessment-01.json` record **all 22 physical checks blocked**:
+installation, worn/unworn correctness, phase-specific removal, recovery, service
+lifecycle/deadline, thermal behavior, and real-run PostgreSQL delivery. No physical
+checks were performed because the operator is available later. The assessment is
+`incomplete`; no device-support or performance claim has been added.
+
+Next: supply the observed host/device/installation metadata, execute the runbook
+with the operator, attach original exports and timestamped observations, and run
+`assess --check-postgres` with a fresh output filename. Start a new attempt after
+any runner, firmware, or installation change. Named unsupported operators remain
+exclusions; they never count as passes. OpenXR and hosted-site qualification stay
+separate.
+
 ### Recorded software verification — 2026-10-26
 
 - Python regression suite: **434 passed, 13 skipped**. The database and HTTP

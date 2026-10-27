@@ -131,17 +131,29 @@ function presentChip(source='native'){
   if(show)animateNext=false;
 }
 function renderDelivery(parent){
-  const el=$('report-delivery-status');el.hidden=!hosted;
+  const el=$('report-delivery-status'),retry=$('retry-report-upload');el.hidden=!hosted;retry.hidden=true;
   if(!hosted)return;
+  if(browserService?.reportDeliveryMode==='download'){
+    el.textContent='Results stay in this browser. Download results JSON after the benchmark finishes.';
+    return;
+  }
   const delivery=status?.report_delivery,ids=new Set(parent?.phases.map(p=>p.run_id)||[]);
   const rows=delivery?.reports.filter(r=>ids.has(r.run_id))||[];
-  if(delivery?.error||rows.some(r=>r.status==='pending'&&r.error)){
+  const rejected=rows.find(r=>r.status==='blocked');
+  if(rejected){
+    el.textContent=(rejected.rejection===409?'This run ID conflicts with a stored report.':rejected.rejection===413?'This report exceeds the upload limit.':'This report was rejected by the receiver.')+' Your copy is saved here. Automatic sending has stopped.';
+    retry.hidden=false;
+  }else if(delivery?.auth_required&&rows.some(r=>r.status!=='sent')){
+    el.textContent='Report saved in this browser. Uploading is paused.';
+  }else if(rows.some(r=>r.rate_limited&&r.status!=='sent')){
+    el.textContent='Upload limit reached. Your report is saved here and will retry later.';
+  }else if(delivery?.error||rows.some(r=>r.status==='pending'&&r.error)){
     el.textContent='Report saved in this browser. Sending will retry automatically.';
   }else if(rows.some(r=>r.status!=='sent')){
     el.textContent='Sending benchmark report… A copy stays in this browser.';
   }else if(rows.length){
     el.textContent=rows.every(r=>r.receipt?.storage==='local')?'Report saved locally.':'Report sent. A copy stays in this browser.';
-  }else el.textContent='Finished benchmark reports are sent automatically. Demo results are never sent.';
+  }else el.textContent='Completed results upload automatically. Download results JSON is also available. Demo results are never sent.';
 }
 function render(){
   const nativeRunning=activeSession()||active();
@@ -188,7 +200,7 @@ function renderDemo(preview){
   $('run').disabled=preview.stage!=='connected'||!controller.ready;$('run').setAttribute('aria-busy','false');
   $('run-status').textContent=parent?(running?`Simulated ${parent.processor.toUpperCase()} · sample data only`:parent.status==='complete'?'Demo complete. All results below are simulated.':'Demo stopped. Partial sample results are shown below.'):preview.stage==='connected'?'Ready for a simulated GPU run.':'Choose a device to preview the benchmark.';
   $('run-status').hidden=false;$('notice').hidden=true;
-  $('download-session').hidden=true;$('report-delivery-status').hidden=true;renderAdvanced(preview);
+  $('download-session').hidden=true;$('report-delivery-status').hidden=true;$('retry-report-upload').hidden=true;renderAdvanced(preview);
   $('device-picker').hidden=true;$('device-retry').hidden=true;$('device-demo-badge').hidden=false;
   $('device-name').textContent=preview.identity?.device_name||'Explore without a headset';
   $('device-chip').textContent=preview.identity?.chip_name||'';
@@ -314,6 +326,11 @@ async function runBenchmark(processor='gpu',cancel=false){
 $('run').onclick=()=>runBenchmark();
 $('connection-cancel').onclick=()=>runBenchmark('gpu',true);
 $('run-cpu').onclick=()=>runBenchmark('cpu');
+$('retry-report-upload').onclick=async()=>{
+  const ids=new Set(session()?.phases.map(p=>p.run_id)||[]);
+  for(const row of status?.report_delivery?.reports||[])if(ids.has(row.run_id)&&row.status==='blocked')await browserService?.retryReport(row.run_id);
+  await poll();
+};
 await poll();const polling=setInterval(poll,1000);
 const clock=setInterval(()=>{if(progressView?.active&&!document.hidden&&(!demo||demo.controller.snapshot.stage==='closed'))$('chip-timer').textContent=clockLabel(Math.max(0,Date.now()-(session()?.started_at||session()?.created_at||job()?.created_at||Date.now()/1000)*1000));},250);
 window.addEventListener('pagehide',event=>{if(event.persisted)return;clearInterval(polling);clearInterval(clock);headset.destroy();demo?.destroy();browserService?.dispose();});

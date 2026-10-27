@@ -1,0 +1,61 @@
+name: Hosted report security
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  hosted-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-ci-database
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd 'pg_isready -U postgres'
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.19'
+          python-version: '3.12'
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: '2.9.6'
+      - name: Install locked test dependencies
+        run: |
+          npm ci
+          uv sync --locked --group dev
+      - name: Browser and receiver security regressions
+        run: npm test
+      - name: Bundle a clearly synthetic protocol fixture for runtime testing
+        run: |
+          node --input-type=module <<'JS'
+          import {mkdir,writeFile} from 'node:fs/promises';
+          import {nativeManifest} from './src/bench_web/tests/native-fixtures.mjs';
+          await mkdir('artifacts/hosting-ci',{recursive:true});
+          await writeFile('artifacts/hosting-ci/manifest.json',JSON.stringify(nativeManifest()));
+          JS
+          node scripts/build-receiver.mjs artifacts/hosting-ci/manifest.json
+          deno check --no-lock supabase/functions/submit-report/index.ts
+      - name: Isolated database and Deno integration
+        env:
+          XRGPU_TEST_POSTGRES: '1'
+          XRGPU_DATABASE_URL: postgresql://postgres:isolated-ci-database@127.0.0.1:5432/postgres
+          XRBENCH_TEST_DENO: deno
+        run: >-
+          uv run --locked --group dev python -m pytest -q
+          engine/tests/test_hosted_database.py
+          engine/tests/test_hosted_deployment.py
+          engine/tests/test_hosted_edge_runtime.py

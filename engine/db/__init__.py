@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from engine.reports import digest, validate
+from engine.db.security import DatabaseConnectionError, connection_options
 
 
 class SchemaNotReady(RuntimeError):
@@ -18,7 +19,16 @@ class Store:
 
     def connect(self):
         import psycopg
-        return psycopg.connect(self.dsn, connect_timeout=3)
+        options = connection_options(self.dsn)
+        try:
+            return psycopg.connect(self.dsn, connect_timeout=3, **options)
+        except psycopg.Error:
+            # Connection errors may include addresses, connection parameters or
+            # credentials. Callers and administrative CLIs get a safe message.
+            raise DatabaseConnectionError(
+                "Could not connect to PostgreSQL. Remote databases require verified TLS; "
+                "check the address, credentials and trusted CA configuration."
+            ) from None
 
     def migrate(self):
         """Apply pending SQL; used by main.py setup and explicit administrative calls."""
@@ -91,7 +101,8 @@ class Store:
         return dict(report=report, receipt=dict(stored=True, run_id=run_id, sha256=sha))
 
     def recent(self, limit=30, offset=0):
-        if not 1 <= limit <= 101 or not 0 <= offset <= 100000:raise ValueError("Invalid history page")
+        if not 1 <= limit <= 101 or not 0 <= offset <= 100000:
+            raise ValueError("Invalid history page")
         from engine.analysis import metadata
         with self.connect() as db:
             rows = db.execute("""SELECT jsonb_build_object(

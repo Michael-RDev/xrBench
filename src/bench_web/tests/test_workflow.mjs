@@ -79,6 +79,7 @@ async function page(kind,report=null,stateOverrides={},options={}){
     return {ok:true,json:async()=>value};
   };
   window.__browserService={
+    reportDeliveryMode:options.downloadOnly?'download':'automatic',
     request:async(path,body)=>(await window.fetch(path,{body:body===undefined?undefined:JSON.stringify(body)})).json(),
     start:async(serial,request_id,processor)=>{
       const s=await (await window.fetch('/api/benchmark-sessions',{body:JSON.stringify({serial,request_id,processor})})).json();
@@ -86,6 +87,7 @@ async function page(kind,report=null,stateOverrides={},options={}){
       return s;
     },
     exportSession:async()=>({reports:[report]}),dispose:()=>{},
+    retryReport:async runId=>{calls.push({path:'/api/reports/'+runId+'/retry'});const row=state.report_delivery?.reports.find(r=>r.run_id===runId);if(row)row.status='pending';},
     retry:async sessionId=>{
       calls.push({path:'/api/benchmark-sessions/'+sessionId+'/retry'});
       const s=state.benchmark_sessions.find(s=>s.session_id===sessionId);s.connection_state='connecting';s.message='Connecting';
@@ -145,7 +147,7 @@ test('hosted reports show automatic sending, retry, and confirmed local capture 
   const p=await page('bench',null,{}, {hosted:true});
   try{
     const doc=p.window.document,notice=doc.getElementById('report-delivery-status');
-    assert.equal(notice.hidden,false);assert.match(notice.textContent,/sent automatically/);
+    assert.equal(notice.hidden,false);assert.match(notice.textContent,/upload automatically.*Download results JSON/);
     doc.getElementById('run').click();await drain();
     const location=p.window.location.href;
     p.state.report_delivery={reports:[{run_id:id,status:'sending'}]};await p.tick();
@@ -156,7 +158,48 @@ test('hosted reports show automatic sending, retry, and confirmed local capture 
     assert.equal(notice.textContent,'Report saved locally.');
     assert.equal(doc.getElementById('run-label').textContent,'Stop');
     assert.equal(p.window.location.href,location);
-    assert.equal(doc.querySelector('[id*=contribute],[id*=upload]'),null);
+    assert.equal(doc.getElementById('retry-report-upload').hidden,true);
+    assert.equal(doc.querySelector('[id*=contribute]'),null);
+  }finally{p.close();}
+});
+
+test('permanently rejected uploads explain the saved copy and retry only through their separate action',async()=>{
+  const p=await page('bench',null,{}, {hosted:true});
+  try{
+    const doc=p.window.document,notice=doc.getElementById('report-delivery-status'),retry=doc.getElementById('retry-report-upload');
+    doc.getElementById('run').click();await drain();
+    for(const [rejection,message] of [[409,/conflicts/],[413,/exceeds/],[400,/rejected/],[415,/rejected/]]){
+      p.state.report_delivery={auth_required:true,reports:[{run_id:id,status:'blocked',rejection}]};await p.tick();
+      assert.match(notice.textContent,message);assert.match(notice.textContent,/saved here.*Automatic sending has stopped/);
+      assert.equal(retry.hidden,false);
+    }
+    for(let i=0;i<3;i++)await p.tick();
+    assert.equal(p.calls.filter(c=>c.path.endsWith('/retry')).length,0);
+    retry.click();await drain();
+    assert.equal(p.calls.filter(c=>c.path==='/api/reports/'+id+'/retry').length,1);
+    assert.equal(p.calls.filter(c=>c.path==='/api/benchmark-sessions'&&c.body).length,1);
+    assert.equal(doc.getElementById('run-label').textContent,'Stop');
+  }finally{p.close();}
+});
+
+test('public download-only mode offers JSON results without contact or sign-in controls',async()=>{
+  const p=await page('bench',null,{}, {hosted:true,downloadOnly:true});
+  try{
+    const doc=p.window.document,notice=doc.getElementById('report-delivery-status');
+    assert.match(notice.textContent,/Results stay in this browser.*Download results JSON/);
+    assert.equal(doc.querySelector('input[type=email],#upload-auth'),null);
+    assert.equal(doc.getElementById('retry-report-upload').hidden,true);
+    doc.getElementById('run').click();await drain();
+    const report={run_id:id,status:'complete',suite_revision:'fixture-suite',configuration:p.state.jobs[0].configuration,
+      device:{model:'Synthetic protocol fixture'},results:[]};
+    p.setReport(report);Object.assign(p.state.jobs[0],{status:'complete',report_available:true});await p.tick();
+    const download=doc.getElementById('download-session');assert.equal(download.hidden,false);
+    download.click();await drain();
+    assert.deepEqual(JSON.parse(await p.downloads[0].text()).reports,[report]);
+    for(let i=0;i<3;i++)await p.tick();
+    assert.equal(p.calls.filter(c=>c.path.includes('/auth/')||c.path.startsWith('/api/reports')).length,0);
+    assert.equal(p.calls.filter(c=>c.path==='/api/benchmark-sessions'&&c.body).length,1);
+    assert.equal(doc.querySelector('input[type=email],#upload-auth'),null);
   }finally{p.close();}
 });
 

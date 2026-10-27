@@ -24,9 +24,7 @@ public final class DeviceProfile {
             JSONObject unsupported=new JSONObject().put("compatible",false).put("status","unsupported").put("reason","Vulkan unavailable: "+error);
             caps.put("vulkan",false).getJSONObject("backends").put("executorch_vulkan",unsupported).put("vulkan_resident",unsupported);
         }
-        android.content.SharedPreferences prefs=context.getSharedPreferences("device-profile",Context.MODE_PRIVATE);
-        String installation=prefs.getString("id",null);
-        if(installation==null){installation=UUID.randomUUID().toString();prefs.edit().putString("id",installation).commit();}
+        String installation=installationId(context);
         return caps.put("model",Build.MODEL).put("manufacturer",Build.MANUFACTURER).put("os",Build.FINGERPRINT)
             .put("product",Build.PRODUCT).put("device",Build.DEVICE)
             .put("soc_model",Build.VERSION.SDK_INT>=31?Build.SOC_MODEL:JSONObject.NULL)
@@ -35,5 +33,15 @@ public final class DeviceProfile {
             .put("installation_id",installation).put("profile_version",1)
             .put("execution_target","unknown").put("target_provenance","Not supplied")
             .put("xr_scene",new JSONObject().put("id","quest3_cube_grid").put("eligible",Build.MODEL.equals("Quest 3")));
+    }
+    static synchronized String installationId(Context context) {
+        android.content.SharedPreferences prefs=context.getSharedPreferences("device-profile",Context.MODE_PRIVATE);
+        String installation=prefs.getString("id",null);
+        if(installation==null){
+            installation=UUID.randomUUID().toString();
+            if(!prefs.edit().putString("id",installation).commit())throw new IllegalStateException("Cannot preserve installation identity");
+        }
+        UUID.fromString(installation);
+        return installation;
     }
 }

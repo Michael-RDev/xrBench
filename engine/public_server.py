@@ -5,22 +5,16 @@ import copy
 import hashlib
 import json
 from functools import partial
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
 import webbrowser
 
 from engine.paths import ROOT, STATE
 from engine.report_delivery import MAX_REPORT_BYTES
 from engine.reports import summarize, validate
-
-
-def _unique(pairs):
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("Duplicate JSON member")
-        result[key] = value
-    return result
+from engine.local_http import (LocalHTTPServer, LocalRequestMixin, PublicFilesMixin,
+                               RequestError, read_json_body)
+from engine.report_json import load_report_json
 
 
 class PostgresReports:
@@ -29,11 +23,7 @@ class PostgresReports:
         self.manifests = manifests
 
     def put(self, payload):
-        raw = json.loads(
-            payload.decode("utf-8"),
-            object_pairs_hook=_unique,
-            parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Non-finite report")),
-        )
+        raw = load_report_json(payload)
         config = raw.get("configuration", {})
         manifest = next(
             (m for m in self.manifests if m["apk_sha256"] == config.get("apk_sha256")), None
@@ -69,7 +59,7 @@ class PostgresReports:
         )
 
 
-class PublicHandler(SimpleHTTPRequestHandler):
+class PublicHandler(LocalRequestMixin, PublicFilesMixin, SimpleHTTPRequestHandler):
     def log_message(self, *_):
         pass
 
@@ -104,23 +94,11 @@ class PublicHandler(SimpleHTTPRequestHandler):
         if self.path != "/api/reports":
             self.respond(404, dict(error="Not found"))
             return
-        if (
-            self.headers.get_content_type() != "application/json"
-            or self.headers.get("Transfer-Encoding")
-            or self.headers.get("Content-Encoding", "identity") != "identity"
-        ):
-            self.respond(415, dict(error="Send an uncompressed native JSON report"))
-            return
-        self.connection.settimeout(30)
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-            if not 0 < length <= MAX_REPORT_BYTES:
-                self.respond(413, dict(error="Native report exceeds the size limit"))
-                return
-            payload = self.rfile.read(length)
-            if len(payload) != length:
-                raise ValueError("Incomplete native report")
+            payload = read_json_body(self, MAX_REPORT_BYTES)
             self.respond(200, self.server.report_sink.put(payload))
+        except RequestError as error:
+            self.respond(error.status, dict(error=str(error)))
         except FileExistsError:
             self.respond(409, dict(error="This run already has different native evidence"))
         except (ValueError, UnicodeError, KeyError, TypeError):
@@ -172,7 +150,7 @@ def create_server(store, directory=ROOT / "dist", port=8765, manifests=None):
                 and previous["apk_sha256"] != manifests[0]["apk_sha256"]
             ):
                 manifests.append(previous)
-    server = ThreadingHTTPServer(
+    server = LocalHTTPServer(
         ("127.0.0.1", port), partial(PublicHandler, directory=str(directory))
     )
     server.report_sink = PostgresReports(store, manifests)

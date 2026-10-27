@@ -53,8 +53,9 @@ def test_operator_sql_files_initialize_upgrade_and_repeat_without_losing_reports
     assert store.health()
 
 
-def test_automatic_setup_initializes_and_reopens_without_losing_reports(uninitialized_store, report, monkeypatch):
+def test_external_setup_reopens_prepared_schema_without_losing_reports(uninitialized_store, report, monkeypatch):
     from engine.startup import prepare_database
+    uninitialized_store.migrate()
     monkeypatch.setenv('XRGPU_DATABASE_URL', uninitialized_store.dsn)
     store = prepare_database()
     receipt = store.put(summarize(report))
@@ -129,6 +130,48 @@ def test_transaction_rolls_back_on_result_failure(store,report):
         db.execute("ALTER TABLE xrgpu_benchmarks.benchmark_results ADD CONSTRAINT injected_failure CHECK (operation <> 'linear')")
     with pytest.raises(errors.CheckViolation):store.put(summarize(report))
     assert store.get(report["run_id"]) is None
+
+
+def test_headset_assessment_independently_checks_native_json_receipt_and_result_rows(store):
+    import json
+    from engine.headset_validation import verify_database
+    from engine.public_server import PostgresReports
+    from engine.tests.test_native_public import native_fixture
+
+    report, manifest = native_fixture()
+    receipt = PostgresReports(store, [manifest]).put(json.dumps(report).encode())
+    verify_database(store, report, receipt)
+    assert "counts" not in report and "timing_valid" not in report["results"][0]
+    with pytest.raises(ValueError, match="digest"):
+        verify_database(store, report, dict(receipt, report_sha256="0" * 64))
+    with store.connect() as connection:
+        connection.execute("""UPDATE xrgpu_benchmarks.benchmark_results
+            SET result = jsonb_set(result, '{status}', %s::jsonb)
+            WHERE run_id=%s AND case_id=%s""",
+            (json.dumps("failed"), report["run_id"], report["results"][0]["case"]))
+    with pytest.raises(ValueError, match="result rows"):
+        verify_database(store, report, receipt)
+
+
+@pytest.mark.parametrize("change", [
+    "UPDATE xrgpu_benchmarks.benchmark_results SET status='failed' WHERE run_id=%s",
+    "UPDATE xrgpu_benchmarks.benchmark_results SET trial=1 WHERE run_id=%s",
+    "UPDATE xrgpu_benchmarks.benchmark_results SET samples='[]'::jsonb WHERE run_id=%s",
+    "UPDATE xrgpu_benchmarks.benchmark_runs SET status='failed' WHERE run_id=%s",
+    "UPDATE xrgpu_benchmarks.benchmark_runs SET finished_at=finished_at + interval '1 second' WHERE run_id=%s",
+])
+def test_headset_database_checks_indexed_columns_as_well_as_native_json(store, change):
+    import json
+    from engine.headset_validation import verify_database
+    from engine.public_server import PostgresReports
+    from engine.tests.test_native_public import native_fixture
+
+    report, manifest = native_fixture()
+    receipt = PostgresReports(store, [manifest]).put(json.dumps(report).encode())
+    with store.connect() as connection:
+        connection.execute(change, (report["run_id"],))
+    with pytest.raises(ValueError, match="indexed|result rows"):
+        verify_database(store, report, receipt)
 
 
 def test_container_restart_preserves_volume(store,report):

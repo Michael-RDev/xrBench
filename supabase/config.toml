@@ -1,0 +1,8 @@
+project_id = "xrbench"
+
+[functions.submit-report]
+enabled = true
+# User access tokens are checked by the gateway and again by our Auth getUser
+# request. Public API keys never authorize report uploads.
+verify_jwt = true
+entrypoint = "./functions/submit-report/index.ts"

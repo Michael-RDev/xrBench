@@ -11,7 +11,7 @@ if (!files.length) files.push('dist/runner/manifest.json');
 const manifests = [];
 for (const file of files) manifests.push(validateManifest(JSON.parse(await readFile(path.resolve(root, file), 'utf8'))));
 await mkdir(output, {recursive: true});
-await build({entryPoints: [path.join(root, 'server/report-receiver.mjs')], outfile: path.join(output, 'receiver.mjs'),
+await build({entryPoints: [path.join(root, 'server/supabase-adapter.mjs')], outfile: path.join(output, 'receiver.mjs'),
   bundle: true, format: 'esm', platform: 'neutral', target: 'es2022'});
 await writeFile(path.join(output, 'releases.json'), JSON.stringify(manifests));
 console.log(`Supabase receiver prepared for ${manifests.length} runner release(s).`);

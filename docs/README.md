@@ -7,10 +7,16 @@ Choose a guide by what you need to do:
 | Guide | Covers |
 | --- | --- |
 | [Development](../engine/README.md) | Local setup, native builds, dashboard, workloads, kernels, API, and tests |
-| [Browser releases](../src/bench_web/README.md) | Connecting, recovery, signing, hosting, and report delivery |
+| [Quest 3 validation](workflows/quest3-validation.md) | Current browser release, physical checks, recovery, and PostgreSQL evidence |
 | [Measurements](../engine/MEASUREMENTS.md) | Presets, timing boundaries, calibration, and comparison rules |
 | [Testing](../testing.md) | Recorded native pipeline verification, evidence, rerun commands, and pending hardware gates |
 | [Devices](workflows/device-onboarding.md) | Requirements, backends, hardware qualification, and onboarding |
+| [Security review](security-review.md) | Confirmed hosting risks, fixes, validation, and remaining deployment gates |
+| [Deployment readiness](deployment-readiness.md) | Activated standalone relay, live HTTP/PostgreSQL evidence, operational checks, and retained portfolio history |
+| [Standalone hosting](standalone-hosting.md) | Canonical xrBench address, private Site identity, root deployment, and retained portfolio history |
+| [Receiver hosting](report-receiver-hosting.md) | Trusted admission, upload limits, and hosted report storage |
+| [Database hosting](database-hosting.md) | Verified TLS, administrative migrations, and restricted runtime credentials |
+| [Local server security](local-server-security.md) | Local HTTP boundaries and safe use of developer/device-control services |
 
 ## Common tasks
 

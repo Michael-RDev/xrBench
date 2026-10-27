@@ -34,6 +34,7 @@ final class NativeOperatorRunner {
                 .put("reason",nativeInfo.optString("reason",available?"":"Vulkan 1.1 is unavailable"))))
             .put("vulkan",available).put("gpu",nativeInfo.optString("device",""))
             .put("profile_version",1).put("runner_revision",meta.getString("runner_revision"))
+            .put("installation_id",DeviceProfile.installationId(context))
             .put("runtime_revision",meta.getString("runtime_revision"))
             .put("native_package_sha256",meta.getString("native_package_sha256"))
             .put("model",Build.MODEL).put("manufacturer",Build.MANUFACTURER)

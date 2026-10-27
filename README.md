@@ -4,8 +4,18 @@
 
 xrBench benchmarks all 221 native xrGPU operator identities on Android ARM64 XR
 devices, using C++ and Vulkan/SPIR-V. The browser connects over USB, installs the
-matched runner, displays typed correctness results, and queues finished reports
-for PostgreSQL.
+matched runner, displays typed correctness results, and exports finished native
+reports. Completed results upload automatically through the website's protected
+server relay into Supabase; JSON downloads remain available.
+
+Visitors run benchmarks and download results JSON without email or sign-in.
+Open [xrBench](https://xrbench.mickirusu.chatgpt.site/) at its standalone address.
+The [hosting guide](docs/standalone-hosting.md) covers that owner-only Site; the
+[deployment handoff](docs/deployment-readiness.md) also records the retained
+portfolio section, protected receiver, durable quotas and shared Supabase project.
+The automatic relay is live and verified through real HTTP submissions and
+PostgreSQL receipts. That handoff distinguishes the deployment checks from
+mocked frontend tests and pending physical-device qualification.
 
 ## Getting started
 
@@ -18,7 +28,8 @@ USB access in the browser and debugging inside the headset.
 After approving debugging, you can remove the headset. Isolated kernel execution
 uses a foreground service and a bounded partial wake lock. Keep USB connected and
 the browser tab open to receive progress. **Download results JSON** preserves a
-copy; reports also retry automatically until PostgreSQL confirms storage.
+copy. Results stay in this browser while automatic uploads retry. A database
+outage never reruns a benchmark or removes its downloadable results.
 
 Older apps and results are preserved during updates. If an unfinished browser
 session belongs to an older release, select **Update runner**. Close other

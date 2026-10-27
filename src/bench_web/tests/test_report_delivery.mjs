@@ -21,8 +21,26 @@ test('automatic delivery sends raw evidence once, validates its receipt, and pre
   assert.equal(calls[0].options.credentials, 'omit'); assert.equal(calls[0].options.redirect, 'error');
   assert.equal(d.snapshot().reports[0].status, 'sent');
   assert.equal(d.snapshot().reports[0].receipt.storage, 'postgresql');
-  assert.equal((await store.deliveries())[0].body, undefined);
+  assert.equal((await store.deliveries())[0].body, calls[0].options.body);
+  assert.deepEqual((await store.deliveries())[0].history.map(e => e.event), ['queued', 'acknowledged']);
   assert.deepEqual((await store.report(native.run_id)).native, native);
+});
+
+test('same-origin receiver requests retain host cookies while cross-origin authenticated requests omit credentials', async () => {
+  for (const endpoint of ['https://bench.example/api/reports', 'https://private-receiver.example/reports']) {
+    const store = new MemoryStore(), calls = [], auth = {getToken: () => 'private-test-access', subscribe: () => () => {}, invalidate() {}};
+    const sameOrigin = new URL(endpoint).origin === 'https://bench.example';
+    const delivery = new ReportDelivery({store, endpoint, siteOrigin: 'https://bench.example', auth: sameOrigin ? null : auth,
+      fetcher: async (url, options) => {calls.push({url, options}); return {ok: true, status: 200, json: () => acknowledge(options.body)};}});
+    try {
+      await delivery.queue(report()); await send(delivery);
+      assert.equal(calls[0].options.credentials, sameOrigin ? 'same-origin' : 'omit');
+      assert.equal(calls[0].options.redirect, 'error');
+      assert.equal(calls[0].options.headers.Authorization, sameOrigin ? undefined : 'Bearer private-test-access');
+      assert.equal((await store.deliveries())[0].body, JSON.stringify(report()));
+      assert.equal(JSON.stringify(await store.deliveries()).includes('private-test-access'), false);
+    } finally {delivery.dispose();}
+  }
 });
 
 test('offline delivery retries after refresh and backoff, without resubmitting acknowledged reports', async () => {
@@ -36,6 +54,9 @@ test('offline delivery retries after refresh and backoff, without resubmitting a
   time = 5000; await send(refreshed); assert.equal(calls, 2);
   const again = new ReportDelivery({store, fetcher: async () => {throw Error('Already sent');}});
   await send(again); assert.equal(again.snapshot().reports[0].status, 'sent');
+  const [evidence] = await store.deliveries();
+  assert.deepEqual(evidence.history.map(e => e.event), ['queued', 'attempt_failed', 'restored', 'acknowledged']);
+  assert.equal(evidence.body, JSON.stringify(report()));
 });
 
 test('HTTP failures and mismatched receipts retain the exact queued evidence', async () => {
@@ -43,7 +64,7 @@ test('HTTP failures and mismatched receipts retain the exact queued evidence', a
     {ok: true, json: async () => ({stored: true, run_id: report().run_id, payload_sha256: 'wrong'})}]) {
     const store = new MemoryStore(), d = new ReportDelivery({store, fetcher: async () => response});
     await d.queue(report()); await send(d);
-    const [row] = await store.deliveries(); assert.equal(row.status, 'pending');
+    const [row] = await store.deliveries(); assert.equal(row.status, response.status === 409 ? 'blocked' : 'pending');
     assert.deepEqual(JSON.parse(row.body), report()); assert.ok(row.error);
   }
 });
@@ -74,5 +95,29 @@ test('timeouts and disposal abort uploads and retain recoverable queue entries',
     await d.queue(report()); d.kick(); await ready; if (dispose) d.dispose(); await d.task;
     assert.equal(d.snapshot().reports[0].status, 'pending');
     assert.equal((await store.deliveries())[0].status, 'pending');
+  }
+});
+
+test('permanent receiver rejections preserve exact evidence and cannot retry through timers or reload',async()=>{
+  for(const status of [400,409,413,415]){
+    const store=new MemoryStore(),native=report();let now=0,calls=0,accepted=false;
+    const create=()=>new ReportDelivery({store,clock:()=>now,fetcher:async(_,options)=>{
+      calls++;return accepted?{ok:true,status:200,json:()=>acknowledge(options.body)}:{ok:false,status};
+    }});
+    let delivery=create();
+    try{
+      await store.saveReport(native.run_id,{native});await delivery.queue(native);await send(delivery);
+      assert.equal(delivery.snapshot().reports[0].status,'blocked');
+      assert.equal(delivery.snapshot().reports[0].rejection,status);
+      for(let i=0;i<10;i++){now+=86400000;await send(delivery);}
+      assert.equal(calls,1);delivery.dispose();delivery=create();await send(delivery);
+      await delivery.queue(native);await send(delivery);assert.equal(calls,1);
+      assert.equal((await store.deliveries())[0].body,JSON.stringify(native));
+      assert.deepEqual((await store.report(native.run_id)).native,native);
+      accepted=true;await delivery.retryRejected(native.run_id);await delivery.task;
+      assert.equal(calls,2);assert.equal(delivery.snapshot().reports[0].status,'sent');
+      assert.equal((await store.deliveries())[0].body,JSON.stringify(native));
+      assert.deepEqual((await store.report(native.run_id)).native,native);
+    }finally{delivery.dispose();}
   }
 });

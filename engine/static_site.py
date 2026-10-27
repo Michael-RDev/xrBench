@@ -2,15 +2,17 @@
 import argparse
 import json
 from functools import partial
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
 import webbrowser
 
 from engine.paths import ROOT, STATE
 from engine.report_delivery import LocalReportSink, MAX_REPORT_BYTES
+from engine.local_http import (LocalHTTPServer, LocalRequestMixin, PublicFilesMixin,
+                               RequestError, read_json_body)
 
 
-class StaticHandler(SimpleHTTPRequestHandler):
+class StaticHandler(LocalRequestMixin, PublicFilesMixin, SimpleHTTPRequestHandler):
     def log_message(self, *_):
         pass
 
@@ -30,7 +32,6 @@ class StaticHandler(SimpleHTTPRequestHandler):
             pass
 
     def do_POST(self):
-        self.connection.settimeout(30)
         host = self.headers.get('Host')
         allowed = {f'localhost:{self.server.server_port}', f'127.0.0.1:{self.server.server_port}'}
         # JSON plus same-origin checks prevent another website from writing local files.
@@ -41,19 +42,11 @@ class StaticHandler(SimpleHTTPRequestHandler):
         if self.path != '/api/reports':
             self.respond(404, dict(error='Not found'))
             return
-        if (self.headers.get_content_type() != 'application/json' or self.headers.get('Transfer-Encoding')
-                or self.headers.get('Content-Encoding', 'identity') != 'identity'):
-            self.respond(415, dict(error='Send an uncompressed JSON report'))
-            return
         try:
-            size = int(self.headers.get('Content-Length', '0'))
-            if not 0 < size <= MAX_REPORT_BYTES:
-                self.respond(413, dict(error='Report exceeds the local receiver size limit'))
-                return
-            payload = self.rfile.read(size)
-            if len(payload) != size:
-                raise ValueError('Incomplete request')
+            payload = read_json_body(self, MAX_REPORT_BYTES)
             self.respond(200, self.server.report_sink.put(payload))
+        except RequestError as error:
+            self.respond(error.status, dict(error=str(error)))
         except FileExistsError:
             self.respond(409, dict(error='This run ID already has a different report'))
         except (ValueError, UnicodeError):
@@ -88,7 +81,7 @@ def create_server(directory=ROOT / 'dist', port=8765, reports=STATE / 'submitted
     for name in ('index.html', 'bench/app.js', 'runner/manifest.json'):
         if not (directory / name).is_file():
             raise FileNotFoundError('The browser release has not been packaged. Build the signed web runner and run npm run build on the maintainer machine.')
-    server = ThreadingHTTPServer(('127.0.0.1', port), partial(StaticHandler, directory=str(directory)))
+    server = LocalHTTPServer(('127.0.0.1', port), partial(StaticHandler, directory=str(directory)))
     server.report_sink = LocalReportSink(reports)
     return server
 

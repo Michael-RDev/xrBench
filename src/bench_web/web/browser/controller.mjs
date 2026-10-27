@@ -7,10 +7,12 @@ const uuid = prefix => prefix + crypto.randomUUID().replaceAll('-', '');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const now = () => Date.now() / 1000;
 export class BrowserController {
-  constructor({transport, store, manifestUrl, delivery = null, fetcher = globalThis.fetch.bind(globalThis), lock = acquireDeviceLock, sleep = delay}) {
+  constructor({transport, store, manifestUrl, delivery = null, siteSha256 = null, pageId = uuid('page-'), fetcher = globalThis.fetch.bind(globalThis), lock = acquireDeviceLock, sleep = delay}) {
     Object.assign(this, {transport, store, manifestUrl, delivery, fetcher, lock, sleep});
     this.sessions = []; this.workers = new Map(); this.starting = false; this.disposed = false; this.deviceRows = new Map();
     this.resuming = new Map(); this.lastDevices = null;
+    this.pageId = pageId;
+    this.siteSha256 = siteSha256;
   }
   async init() {
     if (this.manifest) return;
@@ -23,6 +25,10 @@ export class BrowserController {
     await this.initializing;
   }
   async save(s) {s.updated_at = now(); await this.store.save(s);}
+  event(s, event, run_id = s.phases[s.current_phase]?.run_id, details = {}) {
+    (s.browser_events ||= []).push({event, run_id, at: new Date().toISOString(),
+      event_id: uuid('event-'), page_id: this.pageId, site_sha256: this.siteSha256, ...details});
+  }
   active() {return this.sessions.find(s => !terminal.has(s.status));}
   async start(serial, requestId, processor = 'gpu', chosenDevice = null) {
     if (!['gpu', 'cpu'].includes(processor)) throw Error('Processor must be gpu or cpu');
@@ -54,7 +60,7 @@ export class BrowserController {
         }
         const s = {session_id: uuid('bench-'), request_id: requestId || uuid('request-'), serial: device.serial,
           connection_id: (await sha256(new TextEncoder().encode(device.serial))).slice(0, 24),
-          status: 'starting', created_at: now(), current_phase: 0, cancel_requested: false, processor,
+          status: 'starting', created_at: now(), current_phase: 0, cancel_requested: false, processor, site_sha256: this.siteSha256,
           message: 'Connecting · approve USB debugging in the headset if prompted…', manifest: structuredClone(this.manifest),
           phases: [processor].map(processor => ({processor, backend: this.manifest.configurations[processor].backend,
             configuration: structuredClone(this.manifest.configurations[processor]), run_id: uuid('run-'), status: 'pending'}))};
@@ -64,11 +70,13 @@ export class BrowserController {
     finally {this.starting = false;}
   }
   view(s) {
-    const result = structuredClone(s); delete result.serial; delete result.request_id; delete result.manifest;
+    const result = {...s}; delete result.serial; delete result.request_id; delete result.manifest;
+    delete result.diagnostics; delete result.browser_events;
+    delete result.installation_evidence;
     result.runner_outdated=!terminal.has(s.status)&&s.manifest.apk_sha256!==this.manifest.apk_sha256;
     if(result.runner_outdated)result.message='A newer runner is available. Update runner stops the previous benchmark, keeps its results, and installs the current release.';
     if (result.status === 'disconnected') result.message = connectionMessage({message: result.message});
-    return result;
+    return structuredClone(result);
   }
   async snapshot() {
     await this.init();
@@ -147,6 +155,7 @@ export class BrowserController {
       release=await this.lock(old.serial);
       await this.transport.connect(device);
       const installed=await this.transport.installedHash(old.manifest);
+      this.event(old,'update_requested',undefined,{next_apk_sha256:this.manifest.apk_sha256});
       const capture=async phase=>{
         try{
           const native=await this.transport.read(old.manifest,phase.run_id,'report.json');
@@ -169,6 +178,8 @@ export class BrowserController {
       }
       old.error='Previous runner retired for an update. Existing reports and application data are preserved.';
       await this.finish(old,'canceled');
+      this.event(old,'retired_for_update',undefined,{next_apk_sha256:this.manifest.apk_sha256});
+      await this.save(old);
     }finally{
       try{await this.transport.close();}finally{release?.();this.starting=false;}
     }
@@ -206,6 +217,7 @@ export class BrowserController {
       s.message = 'Connecting · approve USB debugging in the headset if prompted…';
       await this.save(s);
       await this.transport.connect(device, signal);
+      this.event(s, 'connected');
       const properties = await this.transport.properties(signal), identity = identify(properties, s.manifest.device_catalog);
       if (properties.sdk < 29 || !properties.abi.split(',').includes('arm64-v8a')) throw new EvidenceError('This runner requires Android 10+ and arm64-v8a.');
       if (s.processor === 'cpu' && !identity.cpu_eligible) throw new EvidenceError(CPU_RESTRICTION);
@@ -217,10 +229,17 @@ export class BrowserController {
         if (await this.transport.installedHash(s.manifest, signal) !== s.manifest.apk_sha256) throw new EvidenceError('The headset runner changed during this session. Existing results are preserved.');
       } else {
         s.identity = identity; await this.save(s);
+        const captureInstallation = async () => {
+          if (!this.transport.installationSnapshot) return;
+          try {(s.installation_evidence ||= []).push(await this.transport.installationSnapshot(s.manifest));}
+          catch(error) {(s.installation_evidence ||= []).push({error:error.message,captured_at:new Date().toISOString()});}
+        };
+        await captureInstallation();
         await this.transport.install(s.manifest, this.manifestUrl, signal, text => {s.message = text;});
         if (s.cancel_requested) {await this.finish(s, 'canceled'); return;}
         s.message = 'Checking native CPU and GPU capabilities…';
         s.capabilities = await this.transport.probe(s.manifest, signal);
+        await captureInstallation();
         s.identity = identify({...properties, ...Object.fromEntries(Object.entries(s.capabilities).filter(([, v]) => v !== '' && v != null && v !== 'unknown'))}, s.manifest.device_catalog);
         s.capabilities_checked = true;
         this.deviceRows.set(s.serial, {...this.deviceRows.get(s.serial), identity: s.identity});
@@ -245,6 +264,7 @@ export class BrowserController {
       }
       else {
         const error = connectionError(e);
+        this.event(s, 'disconnected');
         console.warn('xrBench device connection interrupted', error);
         s.status = 'disconnected'; s.connection_state = 'blocked';
         s.connection_error = {code: error.code, message: error.message}; s.message = error.message; await this.save(s);
@@ -277,6 +297,7 @@ export class BrowserController {
       phase.configuration.run_id = phase.run_id;
       phase.run = {run_id: phase.run_id, status: 'launching', configuration: structuredClone(phase.configuration), created_at: now(), message: 'Starting the native background benchmark', storage: 'browser'};
       phase.attempted = true; phase.status = 'launching'; s.status = 'running';
+      this.event(s, 'launch_intent', phase.run_id);
       // Persist intent BEFORE any device command. An uncertain launch is recovered, never replayed.
       await this.save(s);
       signal?.throwIfAborted();
@@ -285,6 +306,7 @@ export class BrowserController {
         await this.finish(s, 'canceled'); return;
       }
       await this.transport.launch(s.manifest, phase.configuration, signal);
+      this.event(s, 'launch_returned', phase.run_id);
       s.started_at ||= now();
       phase.run.status = phase.status = 'running'; s.message = `${phase.processor.toUpperCase()} · native execution`;
       await this.save(s); return;
@@ -319,6 +341,18 @@ export class BrowserController {
       status: native.status, progress: progress || native.progress, cancel_requested: s.cancel_requested});
     phase.status = native.status;
     if (terminal.has(native.status)) {
+      this.event(s, 'native_terminal', phase.run_id);
+      if (this.transport.diagnostics) {
+        // The native report precedes Java service cleanup. Give cleanup a bounded
+        // opportunity to finish before capturing OS state; this is outside timing.
+        try {
+          await this.sleep(250);
+          const diagnostic = await this.transport.diagnostics(s.manifest, phase.run_id);
+          (s.diagnostics ||= []).push(diagnostic);
+        } catch (error) {
+          (s.diagnostics ||= []).push({run_id: phase.run_id, captured_at: new Date().toISOString(), error: error.message});
+        }
+      }
       await this.save(s);
       await this.syncDelivery();
       if (s.cancel_requested || native.status === 'canceled') {
@@ -355,6 +389,7 @@ export class BrowserController {
       }
       if (terminal.has(s.status)) return this.view(s);
       s.cancel_requested = true; s.message = 'Stop requested';
+      this.event(s, 'stop_requested', s.phases[s.current_phase]?.run_id);
       for (const p of s.phases) if (p.run) p.run.cancel_requested = true;
       await this.save(s);
       // Abort downloads/authentication/preparation, but keep an attempted native run recoverable.
@@ -370,7 +405,15 @@ export class BrowserController {
     const s = this.sessions.find(s => s.session_id === id); if (!s) throw Error('Session not found');
     const reports = [];
     for (const p of s.phases) {const stored = await this.store.report(p.run_id); if (stored) reports.push(stored.native);}
-    return {schema_version: 1, session: this.view(s), reports};
+    const ids = new Set(s.phases.map(p => p.run_id));
+    const deliveries = (await this.store.deliveries()).filter(row => ids.has(row.run_id));
+    return {schema_version: 1, session: this.view(s), reports, validation: {
+      release: structuredClone(s.manifest), browser_events: structuredClone(s.browser_events || []),
+      diagnostics: structuredClone(s.diagnostics || []), deliveries,
+      installations: structuredClone(s.installation_evidence || []),
+      evidence_version: 2, page_id: this.pageId, site_sha256: s.site_sha256 || null,
+      exported_at: new Date().toISOString(), origin: globalThis.location?.origin || null,
+      user_agent: globalThis.navigator?.userAgent || null}};
   }
   dispose() {this.disposed = true; this.delivery?.dispose(); for (const w of this.workers.values()) w.abort.abort(); void this.transport.close();}
 }

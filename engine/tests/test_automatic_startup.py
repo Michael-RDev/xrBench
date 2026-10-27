@@ -116,7 +116,16 @@ def test_external_database_skips_docker_and_local_configuration(setup, monkeypat
     monkeypatch.setenv('XRGPU_DATABASE_URL', 'postgresql://fixture/test')
     startup.prepare_database()
     assert setup.commands == [] and not setup.path.exists()
-    assert setup.events == ['connect', 'SELECT 1', 'migrate', 'health']
+    assert setup.events == ['connect', 'SELECT 1', 'health']
+
+
+def test_external_database_missing_schema_requires_explicit_admin_setup(setup, monkeypatch):
+    monkeypatch.setenv('XRGPU_DATABASE_URL', 'postgresql://fixture/test')
+    setup.store.health = lambda: (_ for _ in ()).throw(RuntimeError('private-test-password'))
+    with pytest.raises(DatabaseStartupError, match='engine.db.migrate') as error:
+        startup.prepare_database()
+    assert 'migrate' not in setup.events
+    assert 'private-test-password' not in str(error.value)
 
 
 def test_explicit_environment_password_needs_no_file_and_stays_out_of_arguments(setup, monkeypatch):

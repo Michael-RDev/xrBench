@@ -21,16 +21,19 @@ namespace fs=std::filesystem;
 namespace op=xrgpu::operators;
 namespace ex=op::extended;
 using Clock=std::chrono::steady_clock;
+struct RunStopped : std::runtime_error {using std::runtime_error::runtime_error;};
 static double elapsed(Clock::time_point start){return std::chrono::duration<double,std::milli>(Clock::now()-start).count();}
 static std::string timestamp(){
-    auto now=std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    auto instant=std::chrono::system_clock::now();
+    auto now=std::chrono::system_clock::to_time_t(instant);
     std::tm utc{};
 #ifdef _WIN32
     gmtime_s(&utc,&now);
 #else
     gmtime_r(&now,&utc);
 #endif
-    std::ostringstream text;text<<std::put_time(&utc,"%Y-%m-%dT%H:%M:%SZ");return text.str();
+    auto millis=std::chrono::duration_cast<std::chrono::milliseconds>(instant.time_since_epoch()).count()%1000;
+    std::ostringstream text;text<<std::put_time(&utc,"%Y-%m-%dT%H:%M:%S")<<'.'<<std::setfill('0')<<std::setw(3)<<millis<<'Z';return text.str();
 }
 static fs::path contained(const fs::path& root,const std::string& name){
     if(name.empty()||fs::path(name).is_absolute()||name.find('\\')!=std::string::npos)throw std::invalid_argument("Invalid native asset path");
@@ -100,7 +103,7 @@ static Json compare(const fs::path& root,const std::vector<op::Tensor>& actual,c
 }
 Json probe(){return Json::parse(op::probe());}
 
-Json benchmark(const fs::path& root,const Json& config,const fs::path& output,const Json& device){
+Json benchmark(const fs::path& root,const Json& config,const fs::path& output,const Json& device,const BenchmarkHooks& hooks){
     std::string id=config.at("run_id");if(!std::regex_match(id,std::regex("run-[a-f0-9]{32}")))throw std::invalid_argument("Invalid native run identity");
     auto suite=read_json(root/"suite.json");
     if(suite.at("operator_count")!=221||suite.at("cases").size()!=221||config.at("suite_revision")!=suite.at("suite_revision")||config.at("backend")!="xrgpu_vulkan"||config.at("mode")!="isolated")throw std::invalid_argument("Native suite/configuration mismatch");
@@ -113,32 +116,50 @@ Json benchmark(const fs::path& root,const Json& config,const fs::path& output,co
         {"configuration",config},{"suite_revision",suite.at("suite_revision")},{"runtime_revision",config.at("runtime_revision")},
         {"started_at",timestamp()},{"execution_location",config.at("execution_target")},{"processor","gpu"},{"device",device},
         {"native_package_sha256",suite.at("source_package_sha256")},{"native_catalog_sha256",suite.at("native_catalog_sha256")},
-        {"execution_context","foreground_service"},{"results",Json::array()},{"shaders",Json::object()},
+        {"execution_context","foreground_service"},{"results",Json::array()},{"shaders",Json::object()},{"stage_events",Json::array()},
         {"timing_scope","execution_ms: native Vulkan run (host staging, encode, submit, wait); gpu_ms sums GPU timestamp intervals. prepare_ms includes initial input transfer; readback is separate. No CPU numerical fallback."}};
 #ifdef XRBENCH_SOFTWARE_TEST
     report["test_only"]=true;report["physical_qualification"]=false;
 #endif
     auto canceled=[&](){return fs::exists(output/"cancel");};
     auto environment=[&](){return fs::exists(output/"environment.json")?read_json(output/"environment.json"):Json::object();};
-    auto check=[&](){if(canceled())throw std::runtime_error("Canceled by user");if(elapsed(started)>1800000)throw std::runtime_error("Native benchmark deadline exceeded");auto state=environment();if(state.contains("stop_reason"))throw std::runtime_error(state.at("stop_reason").get<std::string>());};
+    auto duration=[&](){
+#ifdef XRBENCH_SOFTWARE_TEST
+        if(hooks.elapsed_ms)return hooks.elapsed_ms();
+#endif
+        return elapsed(started);
+    };
+    auto check=[&](){if(canceled())throw RunStopped(fs::exists(output/"cancel-reason.json")?read_json(output/"cancel-reason.json").value("reason",std::string("Canceled by user")):"Canceled by user");if(duration()>1800000)throw RunStopped("Native benchmark deadline exceeded");auto state=environment();if(state.contains("stop_reason"))throw RunStopped(state.at("stop_reason").get<std::string>());};
+    std::string stage="preparation";
     auto persist=[&](const std::string& current,int count,bool force){
         Json progress={{"run_id",id},{"status",report["status"]},{"sequence",++sequence},{"completed_cases",completed},
             {"total_cases",221},{"current_case",current.empty()?Json(nullptr):Json(current)},{"current_samples",count},
             {"target_samples",samples},{"processor","gpu"},{"phase",current.empty()?(report["status"]=="running"?"preparation":"finished"):"execution"},
-            {"elapsed_ms",elapsed(started)},{"updated_at",timestamp()},{"message",current.empty()?(report["status"]=="running"?"Preparing native operators":"Native benchmark finished"):"Benchmarking "+current}};
+            {"stage",stage},{"elapsed_ms",elapsed(started)},{"updated_at",timestamp()},{"message",current.empty()?(report["status"]=="running"?"Preparing native operators":"Native benchmark finished"):stage+": "+current}};
         report["progress"]=progress;
         if(force||elapsed(last_snapshot)>=1000){save(output/"report.json",report);last_snapshot=Clock::now();}
         save(output/"progress.json",progress);
+        if(hooks.checkpoint)hooks.checkpoint(report);
     };
-    persist("",0,true);
+    auto transition=[&](const std::string& next,const std::string& current,int count){
+        stage=next;
+        report["stage_events"].push_back({{"stage",stage},{"case",current.empty()?Json(nullptr):Json(current)},
+            {"at",timestamp()},{"elapsed_ms",elapsed(started)},{"environment",environment()}});
+        // Stage markers and checkpoint I/O never occur inside a timed native call.
+        persist(current,count,true);
+    };
+    transition("preparation","",0);
     try{
         for(const auto& spec:suite.at("cases")){
             check();std::string operation=spec.at("id");
-            Json row={{"case",operation},{"operation",operation},{"phase","isolated"},{"trial",0},{"status","failed"},
+            Json initial={{"case",operation},{"operation",operation},{"phase","isolated"},{"trial",0},{"status","interrupted"},
+                {"error","Native work has not completed"},
                 {"inputs",spec.at("inputs")},{"outputs",spec.at("outputs")},{"attrs",spec.at("attrs")},{"args",spec.at("args")},
                 {"contract_revision",spec.at("contract_revision")},{"contract_sha256",spec.at("contract_sha256")},
                 {"samples",Json::array()},{"shaders",Json::array()}};
+            report["results"].push_back(initial);auto& row=report["results"].back();
             auto state=environment();row["thermal_start"]=state.value("thermal_status",Json(nullptr));row["charging_start"]=state.value("charging",Json(nullptr));row["display_interactive_start"]=state.value("display_interactive",Json(nullptr));
+            transition("preparation",operation,0);
             std::unique_ptr<op::Operator> legacy;std::unique_ptr<ex::Operator> extended;
             try{
                 auto fixture_start=Clock::now();
@@ -167,32 +188,40 @@ Json benchmark(const fs::path& root,const Json& config,const fs::path& output,co
                     if(!suite.at("runtime_files").contains(file)||suite.at("runtime_files").at(file)!=shader.at("sha256"))throw std::runtime_error("Executed shader differs from verified release");
                     row["shaders"].push_back({{"file",file},{"sha256",shader.at("sha256")}});report["shaders"][file]=shader.at("sha256");
                 }
+                transition("readback",operation,0);
                 auto read_start=Clock::now();auto before=read();row["readback_before_ms"]=elapsed(read_start);row["correctness_before"]=compare(root,before,spec.at("outputs"));
                 if(!row["correctness_before"].at("passed").get<bool>())throw std::runtime_error("Native output differs from independent reference before timing");
-                for(int i=0;i<warmups;++i){check();run();}
+                transition("warmup",operation,0);
+                row["warmup_execution_ms"]=0.;
+                for(int i=0;i<warmups;++i){check();auto warmup_start=Clock::now();run();row["warmup_execution_ms"]=row["warmup_execution_ms"].get<double>()+elapsed(warmup_start);}
+                transition("execution",operation,0);
                 for(int i=0;i<samples;++i){check();auto sample_start=Clock::now();run();double ms=elapsed(sample_start);auto timing=info();
                     auto health=environment();
                     row["samples"].push_back({{"execution_ms",ms},{"gpu_ms",timing.value("gpu_ms",Json(nullptr))},
+                        {"at",timestamp()},{"elapsed_ms",elapsed(started)},
                         {"thermal_status",health.value("thermal_status",Json(nullptr))},{"charging",health.value("charging",Json(nullptr))},
                         {"display_interactive",health.value("display_interactive",Json(nullptr))}});
-                    if(i%10==0)persist(operation,i+1,false);
+                    if(i%10==0)persist(operation,i+1,i==0);
                 }
+                check();transition("readback",operation,int(row["samples"].size()));
                 read_start=Clock::now();auto after=read();row["readback_after_ms"]=elapsed(read_start);row["correctness_after"]=compare(root,after,spec.at("outputs"));row["correctness"]=row["correctness_after"];
                 row["actual_outputs"]=Json::array();auto case_dir=output/operation;fs::create_directories(case_dir);
                 for(size_t i=0;i<after.size();++i){auto file=case_dir/("output-"+std::to_string(i)+".bin");{std::ofstream out(file,std::ios::binary);if(!after[i].data.empty())out.write(reinterpret_cast<const char*>(after[i].data.data()),after[i].data.size());if(!out)throw std::runtime_error("Cannot preserve typed native output");}
                     row["actual_outputs"].push_back({{"name",after[i].name},{"shape",after[i].shape},{"dtype",op::dtype_name(after[i].dtype)},{"storage_dtype",op::dtype_name(storage(after[i]))},{"sha256",xrgpu::file_sha256(file.string())}});}
                 row["status"]=row["correctness_after"].at("passed").get<bool>()?"passed":"failed";
                 if(row["status"]=="failed")row["error"]="Native output differs from independent reference after timing";
+                else row.erase("error");
             }catch(const std::exception& error){
-                row["error"]=error.what();std::string reason=error.what();
-                if(canceled())row["status"]="interrupted";
+                row["error"]=error.what();row["status"]="failed";std::string reason=error.what();
+                if(canceled()||dynamic_cast<const RunStopped*>(&error))row["status"]="interrupted";
                 else if(reason.find("unsupported")!=std::string::npos||reason.find("Unsupported")!=std::string::npos||reason.find("Vulkan 1.1")!=std::string::npos||reason.find("GPU memory")!=std::string::npos||reason.find("device storage limit")!=std::string::npos||reason.find("Vulkan compute limits")!=std::string::npos||reason.find("dispatch dimensions")!=std::string::npos||reason.find("Host-visible Vulkan heap")!=std::string::npos||reason.find("allocation limit exceeded")!=std::string::npos||reason.find("Operator memory limit")!=std::string::npos)row["status"]="unsupported";
             }
             if(legacy)legacy->close();if(extended)extended->close();
-            report["results"].push_back(row);++completed;persist(operation,int(row["samples"].size()),false);check();
+            if(row["status"]!="interrupted")++completed;
+            persist(operation,int(row["samples"].size()),true);check();
         }
         report["status"]="complete";
     }catch(const std::exception& error){report["status"]=canceled()?"canceled":"failed";report["error"]=error.what();}
-    report["finished_at"]=timestamp();persist("",0,true);return report;
+    report["finished_at"]=timestamp();transition("finished","",0);return report;
 }
 }

@@ -12,6 +12,12 @@ jobs:
     env:
       ANDROID_HOME: ${{ github.workspace }}/artifacts/toolchain/android-sdk
       ANDROID_NDK: ${{ github.workspace }}/artifacts/toolchain/android-sdk/ndk/28.2.13676358
+      XRBENCH_DEPLOYMENT: hosted
+      XRBENCH_SUPABASE_URL: https://nqsieptekarxxmqrgmdy.supabase.co
+      XRBENCH_REPORT_DELIVERY: automatic
+      XRBENCH_REPORT_ENDPOINT: /api/reports
+      XRBENCH_SITE_ORIGIN: ${{ vars.XRBENCH_SITE_ORIGIN || 'https://xrbench.mickirusu.chatgpt.site' }}
+      XRBENCH_SITE_PATH: /
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -27,6 +33,8 @@ jobs:
           version: '0.8.22'
           python-version: '3.12'
           enable-cache: true
+      - name: Validate public hosting configuration
+        run: node --input-type=module -e "import {hostingConfig} from './scripts/hosting-config.mjs'; hostingConfig();"
       - name: Install pinned dependencies
         run: |
           npm ci
@@ -60,10 +68,25 @@ jobs:
         run: |
           npm run build
           node --experimental-vm-modules scripts/verify-web.mjs dist
+          node --experimental-vm-modules scripts/verify-web.mjs dist --receiver-outage
+          node scripts/verify-hosting.mjs dist --project-ref nqsieptekarxxmqrgmdy --path /
+          npm run build:receiver
       - name: Upload deployable distribution
         uses: actions/upload-artifact@v4
         with:
           name: xrbench-web-${{ github.sha }}
           path: dist/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload matched hosted backend package
+        uses: actions/upload-artifact@v4
+        with:
+          name: xrbench-hosted-backend-${{ github.sha }}
+          path: |
+            supabase/config.toml
+            supabase/migrations/
+            supabase/functions/submit-report/index.ts
+            supabase/functions/submit-report/receiver.mjs
+            supabase/functions/submit-report/releases.json
           if-no-files-found: error
           retention-days: 14
