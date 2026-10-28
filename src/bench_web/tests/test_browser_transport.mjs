@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {WebUsbTransport, connectionMessage, connectionError} from '../web/browser/transport.mjs';
 import {AdbDaemonWebUsbDevice} from '@yume-chan/adb-daemon-webusb';
+import {AdbDaemonTransport, ADB_DEFAULT_AUTHENTICATORS, AdbAuthType} from '@yume-chan/adb';
 import {sha256} from '../web/browser/evidence.mjs';
 import {manifest} from './browser-fixtures.mjs';
 
@@ -44,6 +45,38 @@ test('process absence is distinguished from a failed liveness command', async ()
   t.shell = async () => ({code: 127, stdout: '', stderr: 'pidof: unavailable'});
   await assert.rejects(() => t.isRunning(m), /Could not check/);
 });
+for (const stage of ['opening', 'handshake', 'credentials', 'approval']) test(`connection timeout identifies ${stage} without assuming approval`, async context => {
+  context.mock.timers.enable({apis: ['setTimeout']});
+  let rejectPending;
+  const pending = new Promise((resolve, reject) => {rejectPending = reject;});
+  const raw = {opened: true, close: async () => {raw.opened = false; rejectPending(Error('USB closed'));}};
+  const messages = [];
+  const transport = new WebUsbTransport({credentials: {async *iterateKeys() {await pending;}}});
+  const originalAuthenticator = ADB_DEFAULT_AUTHENTICATORS[0];
+  context.after(() => {ADB_DEFAULT_AUTHENTICATORS[0] = originalAuthenticator;});
+  ADB_DEFAULT_AUTHENTICATORS[0] = async function* () {yield {arg0: AdbAuthType.PublicKey};};
+  context.mock.method(AdbDaemonTransport, 'authenticate', async options => {
+    if (stage === 'credentials') await options.credentialStore.iterateKeys().next();
+    if (stage === 'approval') await options.authenticators[0](options.credentialStore, () => {}).next();
+    return pending;
+  });
+  const result = assert.rejects(transport.connect({serial: 'test', raw, connect: async () => stage === 'opening' ? pending : {}},
+    new AbortController().signal, value => messages.push(value)), error => {
+    assert.equal(error.code, stage === 'approval' ? 'approval_timeout' : stage === 'credentials' ? 'credential_timeout' : 'usb_timeout');
+    if (stage !== 'approval') assert.doesNotMatch(error.message, /approval timed out/);
+    return true;
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  context.mock.timers.tick(60000);
+  if (stage === 'approval') {
+    assert.equal(raw.opened, true, 'the old one-minute deadline must not close an approval request');
+    context.mock.timers.tick(120000);
+  }
+  await result;
+  assert.match(messages.at(-1), {opening: /Opening/, handshake: /waiting for the headset/, credentials: /saved USB debugging key/, approval: /inside the headset/}[stage]);
+  assert.equal(transport.adb, null); assert.equal(transport.device, null);
+});
+
 test('matching installed APK is reused without a download or install', async () => {
   const m = manifest(), t = new WebUsbTransport({fetcher: () => assert.fail('must not download')});
   t.installedHash = async () => m.apk_sha256;

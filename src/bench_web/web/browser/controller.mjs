@@ -95,7 +95,7 @@ export class BrowserController {
       const device = devices.find(d => d.serial === active.serial);
       // Older saved sessions have only a message. Honor their busy error too.
       const code = active.connection_error?.code || (active.status === 'disconnected' ? connectionError({message: active.message}).code : null);
-      const manual = ['usb_busy', 'permission_denied', 'approval_timeout', 'not_selected'].includes(code);
+      const manual = ['usb_busy', 'permission_denied', 'approval_timeout', 'usb_timeout', 'credential_timeout', 'not_selected'].includes(code);
       if (device && (!manual || reconnected.has(active.serial))) {
         try {await this.resume(active, device);} catch (e) {active.message = connectionMessage(e); active.connection_state = 'blocked';}
       }
@@ -216,7 +216,7 @@ export class BrowserController {
       s.connection_state = 'connecting'; delete s.connection_error;
       s.message = 'Connecting · approve USB debugging in the headset if prompted…';
       await this.save(s);
-      await this.transport.connect(device, signal);
+      await this.transport.connect(device, signal, text => {s.message = text;});
       this.event(s, 'connected');
       const properties = await this.transport.properties(signal), identity = identify(properties, s.manifest.device_catalog);
       if (properties.sdk < 29 || !properties.abi.split(',').includes('arm64-v8a')) throw new EvidenceError('This runner requires Android 10+ and arm64-v8a.');
