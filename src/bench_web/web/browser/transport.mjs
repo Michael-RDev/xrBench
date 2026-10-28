@@ -2,6 +2,7 @@ import {Adb, AdbDaemonTransport, ADB_DEFAULT_AUTHENTICATORS, AdbAuthType} from '
 import {AdbDaemonWebUsbDevice, AdbDaemonWebUsbDeviceManager} from '@yume-chan/adb-daemon-webusb';
 import AdbWebCredentialStore from '@yume-chan/adb-credential-web';
 import {sha256, runPattern, EvidenceError} from './evidence.mjs';
+import {connectUsb, closeUsb} from './usb-connection.mjs';
 
 const quote = value => "'" + String(value).replaceAll("'", "'\\''") + "'";
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -56,75 +57,11 @@ export class WebUsbTransport {
       return device;
     });
   }
-  async connect(device, signal, message = () => {}) {
-    signal?.throwIfAborted();
-    if (this.adb && this.device?.serial === device.serial) return;
-    await this.close(); this.device = device;
-    const cancel = () => {void device.raw.close().catch(() => {});};
-    signal?.addEventListener('abort', cancel, {once: true});
-    let timedOut = false, stage = 'opening';
-    const progress = (next, text) => {stage = next; message(text);};
-    const expire = () => {timedOut = true; cancel();};
-    let timer = setTimeout(expire, 60000);
-    try {
-      progress('opening', 'Opening the headset USB interface…');
-      const connection = await device.connect();
-      signal?.throwIfAborted();
-      progress('handshake', 'USB opened · waiting for the headset to respond…');
-      const credentials = this.credentials ||= new AdbWebCredentialStore('xrBench@' + location.host);
-      const credentialStore = {
-        async *iterateKeys() {
-          progress('credentials', 'Reading this browser’s saved USB debugging key…');
-          for await (const key of credentials.iterateKeys()) {
-            progress('handshake', 'Checking this browser’s USB debugging permission…');
-            yield key;
-          }
-          progress('handshake', 'Checking this browser’s USB debugging permission…');
-        },
-        async generateKey() {
-          progress('credentials', 'Preparing this browser’s USB debugging key…');
-          const key = await credentials.generateKey();
-          progress('handshake', 'Requesting USB debugging permission…');
-          return key;
-        },
-      };
-      const authenticators = ADB_DEFAULT_AUTHENTICATORS.map(authenticate => async function* (store, request) {
-        for await (const packet of authenticate(store, request)) {
-          if (packet.arg0 === AdbAuthType.PublicKey) {
-            // Start the human approval window only once the key is ready.
-            // Reaching the Quest menu can take longer than the USB handshake.
-            clearTimeout(timer); timer = setTimeout(expire, 180000);
-            progress('approval', 'Allow USB debugging inside the headset for this website · waiting up to 3 minutes…');
-          }
-          yield packet;
-        }
-      });
-      const transport = await AdbDaemonTransport.authenticate({serial: device.serial, connection,
-        credentialStore, authenticators});
-      signal?.throwIfAborted();
-      this.adb = new Adb(transport);
-      const current = this.adb;
-      current.disconnected.then(() => {if (this.adb === current) this.adb = null;}, () => {if (this.adb === current) this.adb = null;});
-      if (!this.adb.subprocess.shellProtocol) throw Error('This headset does not support the required Android shell protocol.');
-    } catch (error) {
-      await this.close();
-      if (!timedOut) throw connectionError(error);
-      const detail = stage === 'approval'
-        ? ['approval_timeout', 'USB debugging approval timed out. Put on the headset, allow USB debugging, then retry.']
-        : stage === 'credentials'
-          ? ['credential_timeout', 'The browser could not read or prepare its USB debugging key. Reload this website, then retry.']
-          : ['usb_timeout', stage === 'opening'
-            ? 'Opening the headset USB interface timed out. Close other headset tools, reconnect the USB cable, then retry.'
-            : 'The headset did not finish the USB handshake. Reconnect the USB cable and retry. No benchmark was started.'];
-      throw new ConnectionError(...detail, error);
-    }
-    finally {clearTimeout(timer); signal?.removeEventListener('abort', cancel);}
+  async connect(device, signal, message = () => {}, onTrace = () => {}) {
+    return connectUsb.call(this, device, signal, message, onTrace, {Adb, AdbDaemonTransport,
+      ADB_DEFAULT_AUTHENTICATORS, AdbAuthType, AdbWebCredentialStore, ConnectionError, connectionError});
   }
-  async close() {
-    const adb = this.adb, device = this.device; this.adb = null; this.device = null;
-    try {await adb?.close();} catch {}
-    try {if (device?.raw.opened) await device.raw.close();} catch {}
-  }
+  async close() {return closeUsb.call(this);}
   async shell(args, {data, signal, timeout = 15000, limit = 64 * 1024 ** 2, allowFailure = false, onWrite} = {}) {
     if (!this.adb) throw Error('Headset disconnected. Reconnect and retry to recover this run.');
     const abort = new AbortController(), cancel = () => abort.abort(signal.reason);

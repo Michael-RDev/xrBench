@@ -2,7 +2,8 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {WebUsbTransport, connectionMessage, connectionError} from '../web/browser/transport.mjs';
 import {AdbDaemonWebUsbDevice} from '@yume-chan/adb-daemon-webusb';
-import {AdbDaemonTransport, ADB_DEFAULT_AUTHENTICATORS, AdbAuthType} from '@yume-chan/adb';
+import {AdbDaemonTransport, ADB_DEFAULT_AUTHENTICATORS, AdbAuthType, AdbCommand} from '@yume-chan/adb';
+import {Consumable} from '@yume-chan/stream-extra';
 import {sha256} from '../web/browser/evidence.mjs';
 import {manifest} from './browser-fixtures.mjs';
 
@@ -54,13 +55,17 @@ for (const stage of ['opening', 'handshake', 'credentials', 'approval']) test(`c
   const transport = new WebUsbTransport({credentials: {async *iterateKeys() {await pending;}}});
   const originalAuthenticator = ADB_DEFAULT_AUTHENTICATORS[0];
   context.after(() => {ADB_DEFAULT_AUTHENTICATORS[0] = originalAuthenticator;});
-  ADB_DEFAULT_AUTHENTICATORS[0] = async function* () {yield {arg0: AdbAuthType.PublicKey};};
+  ADB_DEFAULT_AUTHENTICATORS[0] = async function* () {yield {command: AdbCommand.Auth, arg0: AdbAuthType.PublicKey, payload: new Uint8Array([0])};};
   context.mock.method(AdbDaemonTransport, 'authenticate', async options => {
     if (stage === 'credentials') await options.credentialStore.iterateKeys().next();
-    if (stage === 'approval') await options.authenticators[0](options.credentialStore, () => {}).next();
+    if (stage === 'approval') {
+      const {value} = await options.authenticators[0](options.credentialStore, () => {}).next();
+      const writer = options.connection.writable.getWriter();
+      try {await Consumable.WritableStream.write(writer, value);} finally {writer.releaseLock();}
+    }
     return pending;
   });
-  const result = assert.rejects(transport.connect({serial: 'test', raw, connect: async () => stage === 'opening' ? pending : {}},
+  const result = assert.rejects(transport.connect({serial: 'test', raw, connect: async () => stage === 'opening' ? pending : {readable: new ReadableStream({}), writable: new Consumable.WritableStream({write() {}})}},
     new AbortController().signal, value => messages.push(value)), error => {
     assert.equal(error.code, stage === 'approval' ? 'approval_timeout' : stage === 'credentials' ? 'credential_timeout' : 'usb_timeout');
     if (stage !== 'approval') assert.doesNotMatch(error.message, /approval timed out/);

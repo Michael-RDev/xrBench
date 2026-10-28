@@ -71,7 +71,7 @@ export class BrowserController {
   }
   view(s) {
     const result = {...s}; delete result.serial; delete result.request_id; delete result.manifest;
-    delete result.diagnostics; delete result.browser_events;
+    delete result.diagnostics; delete result.browser_events; delete result.connection_trace;
     delete result.installation_evidence;
     result.runner_outdated=!terminal.has(s.status)&&s.manifest.apk_sha256!==this.manifest.apk_sha256;
     if(result.runner_outdated)result.message='A newer runner is available. Update runner stops the previous benchmark, keeps its results, and installs the current release.';
@@ -216,7 +216,10 @@ export class BrowserController {
       s.connection_state = 'connecting'; delete s.connection_error;
       s.message = 'Connecting · approve USB debugging in the headset if prompted…';
       await this.save(s);
-      await this.transport.connect(device, signal, text => {s.message = text;});
+      await this.transport.connect(device, signal, text => {s.message = text;}, entry => {
+        const trace = s.connection_trace ||= [];
+        trace.push(entry); if (trace.length > 128) trace.splice(0, trace.length - 128);
+      });
       this.event(s, 'connected');
       const properties = await this.transport.properties(signal), identity = identify(properties, s.manifest.device_catalog);
       if (properties.sdk < 29 || !properties.abi.split(',').includes('arm64-v8a')) throw new EvidenceError('This runner requires Android 10+ and arm64-v8a.');
@@ -409,7 +412,7 @@ export class BrowserController {
     const deliveries = (await this.store.deliveries()).filter(row => ids.has(row.run_id));
     return {schema_version: 1, session: this.view(s), reports, validation: {
       release: structuredClone(s.manifest), browser_events: structuredClone(s.browser_events || []),
-      diagnostics: structuredClone(s.diagnostics || []), deliveries,
+      diagnostics: structuredClone(s.diagnostics || []), connection_trace: structuredClone(s.connection_trace || []), deliveries,
       installations: structuredClone(s.installation_evidence || []),
       evidence_version: 2, page_id: this.pageId, site_sha256: s.site_sha256 || null,
       exported_at: new Date().toISOString(), origin: globalThis.location?.origin || null,

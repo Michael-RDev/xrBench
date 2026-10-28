@@ -116,7 +116,7 @@ function fixture(options = {}) {
   let connected = true, reportAvailable = false, releaseCount = 0, pauses = [], reports = new Map();
   const transport = {
     supported: true, choose: () => Promise.resolve(devices[0]), discover: async () => connected ? devices : [],
-    connect: async (_, signal) => {calls.push('connect'); if (!connected) throw Error('disconnected'); await options.connect?.(signal); signal?.throwIfAborted();}, close: async () => {},
+    connect: async (_, signal, message, trace) => {calls.push('connect'); if (!connected) throw Error('disconnected'); await options.connect?.(signal, trace); signal?.throwIfAborted();}, close: async () => {},
     properties: async () => ({model: 'Quest 3', sdk: 32, abi: 'arm64-v8a', soc_model: 'Qualcomm Snapdragon XR2 Gen 2', ...options.properties}),
     install: async (m, url, signal, message) => {calls.push('install'); message('Installing'); await options.install?.(signal); signal.throwIfAborted();},
     installedHash: async () => m.apk_sha256,
@@ -161,7 +161,8 @@ function fixture(options = {}) {
 }
 test('finished native runs send their reports automatically without sending USB/session state', async () => {
   for (const status of ['complete', 'failed', 'canceled']) {
-    const sent = [], f = fixture({delivery: store => new ReportDelivery({store, endpoint: '/api/reports', fetcher: async (url, {body}) => {
+    const sent = [], f = fixture({connect: (signal, trace) => trace({attempt: 1, event: 'connected', stage: 'authenticating', elapsed_ms: 1}),
+      delivery: store => new ReportDelivery({store, endpoint: '/api/reports', fetcher: async (url, {body}) => {
       sent.push(JSON.parse(body)); return {ok: true, json: async () => ({stored: true, storage: 'postgresql', run_id: sent.at(-1).run_id,
         payload_sha256: await sha256(new TextEncoder().encode(body))})};
     }})});
@@ -172,6 +173,8 @@ test('finished native runs send their reports automatically without sending USB/
       assert.equal(s.status, status); assert.equal(sent.length, 1); assert.deepEqual(sent[0], native);
       assert.equal(sent[0].results.length, 63); assert.equal(sent[0].backend, 'executorch_vulkan');
       assert.equal(sent[0].serial, undefined); assert.equal(sent[0].connection_id, undefined); assert.equal(sent[0].manifest, undefined);
+      assert.equal(sent[0].connection_trace, undefined);
+      assert.equal((await f.controller.exportSession(s.session_id)).validation.connection_trace.length, 1);
       await f.controller.snapshot(); await f.controller.delivery.task; assert.equal(sent.length, 1);
     } finally {await f.close();}
   }
@@ -444,4 +447,24 @@ test('GPU launch interrupted by disconnect recovers its single phase without rep
     assert.equal(restored.status, 'complete'); assert.equal(restored.phases.length, 1);
     assert.equal(restored.phases[0].run_id, config.run_id); assert.equal(g.launches.length, 0);
   } finally {await f.close(); await g?.close();}
+});
+
+
+test('failed authentication traces are bounded, persisted and downloadable without entering native reports', async () => {
+  const f = fixture({connect: (signal, trace) => {
+    for (let i = 0; i < 200; i++) trace({attempt: 1, event: 'packet_received', stage: 'handshake', command: 'AUTH', auth_type: 1, elapsed_ms: i});
+    throw Error('handshake failed');
+  }});
+  try {
+    const s = await f.start(); await f.step();
+    const saved = f.store.items.find(item => item.session_id === s.session_id);
+    assert.equal(saved.connection_trace.length, 128);
+    assert.equal(f.controller.view(saved).connection_trace, undefined);
+    const exported = await f.controller.exportSession(s.session_id);
+    assert.deepEqual(exported.validation.connection_trace, saved.connection_trace);
+    assert.equal(exported.validation.connection_trace[0].elapsed_ms, 72);
+    assert.deepEqual(exported.reports, []);
+    assert.equal((await f.store.deliveries()).length, 0);
+    assert.equal(f.launches.length, 0);
+  } finally {await f.close();}
 });
