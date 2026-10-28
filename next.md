@@ -1,3 +1,122 @@
+# Quest 3 USB repair: deployed, hardware verification pending
+
+Updated October 27, 2026. The Quest is unavailable; the user explicitly selected
+software cancellation repair plus tracing and deployment without live hardware testing.
+**The original Quest connection stall has not been verified fixed.** No new native
+GPU run or hardware report was produced or inspected.
+
+## Current repair and evidence
+
+- GitHub branch: `quest3-usb-auth`, based on `a75996b` (merged prior handoff).
+  Repair commit: `2ed205b6011bccd15d85fdc0235648416bd60b9b`.
+  GitHub `main` is not part of the push. The pre-existing deletion of
+  `.env.hosting.example` remains unstaged and untouched; the existing branch-name
+  correction in this document is retained.
+- Inspected the separate hosted repository at the deployed baseline
+  `48f9955a6ef24bcc0ab2ad7623d0610126908a7d` before editing.
+  Its retained checkout is `/Users/michael/Desktop/xrBench/artifacts/site-quest3-usb`,
+  also on `quest3-usb-auth`. Only its configured remote `main` was advanced for
+  publication, as explicitly agreed; no replacement Site was created.
+- Reproduced a software defect with the real authentication library: the previous
+  timeout closed USB but left `connect()` pending if the authentication stream
+  did not settle. This is software evidence, not proof of the Quest stall's cause.
+  A normal simulated public-key/CNXN exchange completed with the existing library.
+- `usb-connection.mjs` now races opening/authentication against cancellation and
+  deadlines. The caller settles independently of raw close. Abandoned attempts
+  retain ownership until their operation and cleanup settle; late opening or
+  authentication is closed before another attempt is allowed. Stuck cleanup
+  blocks retry with reconnect/reload guidance instead of another approval request.
+- Setup remains 60 seconds. The separate 180-second approval window starts only
+  after the public-key packet's actual consumed write completes. CNXN receipt
+  changes the message to authentication finalization, never another approval.
+  Reconnect timeouts no longer assert that a prior benchmark never started.
+- `connect(device, signal, onProgress, onTrace)` adds an optional trace callback.
+  The existing session diagnostic download exposes the last 128 entries at
+  `validation.connection_trace`, including failed attempts. Events record stage,
+  AUTH/CNXN command, AUTH subtype, completion/failure and elapsed milliseconds.
+  They contain no RSA material, packet payloads or serials and do not enter native
+  report JSON or automatic report uploads. Relevant events are
+  `packet_write_started`, `packet_write_complete`, `packet_write_failed`,
+  `packet_received`, `authenticate_complete`, `connected`, `failed`, `canceled`,
+  `cleanup_complete` and `cleanup_blocked`.
+- The hosted build uses a repeatable patcher with the baseline bundle SHA-256 and
+  four exact transport/controller regions. It injects the identical tested
+  runtime and rejects source drift; unrelated bundle code is preserved. The old
+  `scripts/usb-connection-source.txt` is historical, not the active implementation.
+- The clean Mac checkout initially passed 11/12 hosted checks: CSS SRI matched
+  Windows CRLF bytes while Git stored LF bytes. Rebuilding recalculated integrity
+  from actual bytes. All final hosted checks pass; the deployed Chrome page has
+  matching JS/CSS integrity attributes and no captured console warnings/errors.
+
+## Current deployment
+
+- Site: <https://xrbench.mickirusu.chatgpt.site>
+- Project: `appgprj_6ae0ddb34b808191af7c1f31adeb4ee1`
+- Hosted source commit: `463c5a3850b38e882581adeb0c593d4932b89c72`
+- Saved version: **10**,
+  `appgprj_6ae0ddb34b808191af7c1f31adeb4ee1~appgver_cbd7b0f428c481918399d637a2974877`
+- Deployment: `appgdep_6ae14d5b3b0c81919f8d707feb9c7aac`, native result `succeeded`,
+  October 27 at 9:18 PM America/New_York (`2026-10-28T01:18:27.924599Z`).
+- Owner-only access is unchanged: custom policy revision 1, one owner, zero
+  external visitors. Runtime environment revision remains 1; no secrets changed.
+- Site metadata SHA-256, confirmed in the real HTTPS Chrome document:
+  `e498b40bd60b6ebbba26fb98cfa2b435835985e54363038f9ad6f6d13b609bb4`.
+- Live JS integrity:
+  `sha256-Bre11bzNPyBEFggSXf6EfNnWQLnJBlVUgU6cseoJy7I=`.
+- Runner version 12 and signed package are unchanged. Verified APK SHA-256:
+  `7d18fc075560f0b2584966fda263f4796ad80f5a45865e7c56ae480e8a8f0fc7`.
+- Retained archive: `artifacts/quest3-usb-auth-site.tar.gz`.
+  Ignored software logs and structured evidence: `artifacts/quest3-usb-auth-evidence/`.
+  These are local investigation artifacts, not native benchmark results.
+
+## Final software validation
+
+- `npm test`: **208/208 passed**.
+- Transport/controller/USB connection tests: **59/59 passed**.
+- Hosted `node scripts/build.mjs` then `node --test tests/*.mjs`: **16/16 passed**.
+- Tests cover hanging USB close/authentication, cancellation during opening and
+  authentication, late results, cleanup ownership, failed prior close, retry,
+  stalled/failed packet writes, real WebUSB serialization and consumable
+  backpressure, signature/public-key auth, CNXN versus authentication completion,
+  trace persistence/bounds/export, unchanged upload payloads and hosted patch drift.
+- The hosted suite executes the actual patched transport with its bundled Tango
+  library using simulated packet streams. These are explicitly software tests.
+- Actual HTTPS Chrome verification: new build identity and SRI match, Run enabled,
+  disconnected page rendered, no captured console warnings/errors. Run and demo
+  were not invoked. No localhost result was used as hardware evidence.
+
+## Remaining hardware verification
+
+This session controls a Mac. Before any changes, its already-running ADB server
+reported no devices. The user confirmed they do not have the Quest with them.
+The server and unrelated applications were left alone.
+
+When the Quest is available, recover any existing session rather than creating a
+replacement run. Coordinate exclusive ownership: release/cancel browser USB before
+native ADB inspection, then stop the ADB server before browser retries. Use the
+same HTTPS origin and its persisted browser key. Do not clear storage, revoke all
+keys, uninstall runners or replace drivers speculatively.
+
+Check actual public-key `packet_write_complete` (AUTH subtype 3), incoming
+`packet_received` CNXN, then `authenticate_complete`. A prepared key or approval
+message alone proves none of these. Saved-key signature authentication may connect
+without a public-key write. A CNXN event without `authenticate_complete` isolates
+finalization; a write-start without write-complete isolates transfer consumption.
+
+Still pending: verified Quest connection, exact signed runner install/reuse,
+native capability inspection, GPU execution, recovery/download/upload of the
+original native report, and report correctness/failure inspection. Keep any
+benchmark failures separate from transport verification. Do not claim a hardware
+connection fix from the deployed software tests.
+
+---
+
+## Historical Windows handoff (superseded by current status above)
+
+The following preserves the previous investigation and its observations. Its
+Git-only authorization note described that earlier handoff, not this authorized
+repair/deployment pass.
+
 # Handoff: Quest 3 stalls on the live website
 
 Updated 2026-10-27. **Unresolved: no native benchmark execution was verified.**
@@ -23,7 +142,7 @@ only as part of a subsequent user-authorized debugging task.
 
 - This handoff branch is based on GitHub `origin/main` at
   `f256735714d5fdd8c0f3b34335bc0bc7b8f7df19`.
-- Continue from branch `codex/usb-connection-handoff`.
+- Continue from branch `usb-connection-handoff`.
 - It carries only this investigation's transport progress, timeout changes,
   regression tests, and this document. The connection problem is not fixed yet.
 - The original checkout is `C:/Users/micki/OneDrive/Desktop/xrBench`. It was on
