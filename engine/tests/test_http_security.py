@@ -77,20 +77,14 @@ def test_local_servers_refuse_forwarded_traffic(local_server, name):
 
 
 @pytest.mark.parametrize('method', ['GET', 'HEAD'])
-def test_public_files_exclude_hidden_unlisted_and_symlink_paths(local_server, tmp_path, method):
+def test_public_files_exclude_hidden_and_unlisted_paths(local_server, method):
     if local_server.kind == 'developer':
         pytest.skip('Developer assets already use an explicit route map')
     root = local_server.root
     (root / '.env').write_text('fake-private-value')
     (root / 'secret.txt').write_text('fake-private-value')
-    outside = tmp_path / 'outside'
-    outside.mkdir()
-    (outside / 'LICENSE').write_text('fake-private-value')
-    (root / 'runner/leak.apk').symlink_to(outside / 'LICENSE')
     (root / 'licenses').mkdir()
-    (root / 'licenses/private').symlink_to(outside, target_is_directory=True)
-    for path in ('/.env', '/%2eenv', '/secret.txt', '/runner/leak.apk',
-                 '/licenses/private/LICENSE', '/runner/%2e%2e/.env',
+    for path in ('/.env', '/%2eenv', '/secret.txt', '/runner/%2e%2e/.env',
                  '/runner/%2e%2e%2f.env', '/runner/..\\.env', '/runner/', '/_headers'):
         status, body = request(local_server, path, method)
         assert status == 404, path
@@ -102,6 +96,23 @@ def test_public_files_exclude_hidden_unlisted_and_symlink_paths(local_server, tm
     (root / 'licenses/public').mkdir()
     (root / 'licenses/public/LICENSE').write_text('public license')
     assert request(local_server, '/licenses/public/LICENSE', method)[0] == 200
+
+
+@pytest.mark.parametrize('method', ['GET', 'HEAD'])
+def test_public_files_exclude_symlink_paths(local_server, tmp_path, method, make_symlink):
+    if local_server.kind == 'developer':
+        pytest.skip('Developer assets already use an explicit route map')
+    root = local_server.root
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (outside / 'LICENSE').write_text('fake-private-value')
+    make_symlink(root / 'runner/leak.apk', outside / 'LICENSE')
+    (root / 'licenses').mkdir()
+    make_symlink(root / 'licenses/private', outside, target_is_directory=True)
+    for path in ('/runner/leak.apk', '/licenses/private/LICENSE'):
+        status, body = request(local_server, path, method)
+        assert status == 404
+        assert b'fake-private-value' not in body
 
 
 def test_header_deadline_applies_to_slow_drip_requests(local_server):
@@ -122,7 +133,7 @@ def test_header_deadline_applies_to_slow_drip_requests(local_server):
         try:
             try:
                 response = connection.recv(8192)
-            except ConnectionResetError:
+            except ConnectionError:
                 response = b''
             assert not response or b' 408 ' in response.split(b'\r\n', 1)[0]
             assert time.monotonic() - started < .7
@@ -155,15 +166,29 @@ def test_body_deadline_applies_to_slow_drip_requests(local_server):
         connection.sendall((f'POST {path} HTTP/1.0\r\nHost: localhost:{local_server.server_port}\r\n'
                             'X-XRGPU-Session: test-token\r\nContent-Type: application/json\r\n'
                             'Content-Length: 100\r\n\r\n').encode())
-        for _ in range(8):
+        stop = threading.Event()
+
+        def drip():
+            while not stop.wait(.025):
+                try:
+                    connection.sendall(b' ')
+                except OSError:
+                    return
+
+        sender = threading.Thread(target=drip, daemon=True)
+        sender.start()
+        try:
             try:
-                connection.sendall(b' ')
-            except OSError:
-                break
-            time.sleep(.05)
-        response = connection.recv(8192)
-    assert b' 408 ' in response.split(b'\r\n', 1)[0]
+                response = connection.recv(8192)
+            except ConnectionError:
+                # Windows may reset a closed socket with unread request bytes.
+                response = b''
+        finally:
+            stop.set()
+            sender.join()
+    assert not response or b' 408 ' in response.split(b'\r\n', 1)[0]
     assert time.monotonic() - started < 1
+    assert request(local_server)[0] == 200
 
 
 @pytest.mark.parametrize('framing,expected', [
@@ -185,7 +210,8 @@ def test_ambiguous_body_framing_is_rejected(local_server, framing, expected):
     json.dumps({'padding': 'x' * 65537}).encode(), json.dumps({'padding': [0] * 25001}).encode(),
     json.dumps({str(i): 0 for i in range(257)}).encode(), b'{"x":NaN}', b'{"x":1e999}',
     b'{"x":"\\ud800"}', b' ' * (MAX_REPORT_BYTES + 1),
-])
+], ids=['duplicate-member', 'nesting', 'long-string', 'long-array', 'many-keys',
+        'nan', 'infinity', 'surrogate', 'oversize'])
 def test_direct_report_sinks_reject_resource_abuse_before_storage(tmp_path, payload):
     calls = []
     postgres = PostgresReports(SimpleNamespace(put=lambda value: calls.append(value)), [])

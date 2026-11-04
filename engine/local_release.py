@@ -101,6 +101,8 @@ def source_identity():
             ENGINE / "public_native",
             ENGINE / "android/app/src/main",
             ROOT / "src/bench_web/web",
+            ROOT / "src/stats_for_nerds/web",
+            ENGINE / "web",
             ROOT / "server",
         ]
         for p in folder.rglob("*")
@@ -109,14 +111,28 @@ def source_identity():
     paths += [
         ROOT / "package-lock.json",
         ROOT / "dependencies.json",
+        ROOT / "package.json",
+        ROOT / "THIRD_PARTY_NOTICES.md",
+        ENGINE / "device-catalog.json",
+        ENGINE / "local_release.py",
+        ENGINE / "build.py",
         ENGINE / "public_build.py",
         ENGINE / "native_suite.py",
         ENGINE / "native_release.py",
         ENGINE / "android/app/build.gradle",
+        ENGINE / "android/build.gradle",
+        ENGINE / "android/settings.gradle",
+        ENGINE / "android/gradle.properties",
         ENGINE / "web_distribution.py",
         ROOT / "scripts/build-web.mjs",
+        ROOT / "scripts/hosting-config.mjs",
     ]
     value = hashlib.sha256()
+    for key in (
+        "XRBENCH_DEPLOYMENT", "XRBENCH_SUPABASE_URL", "XRBENCH_REPORT_DELIVERY",
+        "XRBENCH_REPORT_ENDPOINT", "XRBENCH_SITE_ORIGIN", "XRBENCH_SITE_PATH",
+    ):
+        value.update(key.encode() + b"\0" + os.environ.get(key, "").encode() + b"\0")
     for path in sorted(paths):
         value.update(path.relative_to(ROOT).as_posix().encode() + b"\0" + path.read_bytes() + b"\0")
     return value.hexdigest()

@@ -3,6 +3,7 @@
 import copy
 from datetime import datetime, timezone
 import json
+import os
 
 import pytest
 
@@ -136,7 +137,7 @@ def attempt(tmp_path):
         target.parent.mkdir(parents=True, exist_ok=True)
         if name == "index.html":
             text = text.replace("<head>", '<head>\n  <meta name="xrbench-site-sha256" content="' + SITE_SHA + '">')
-        target.write_text(text)
+        target.write_bytes(text.encode('utf-8'))
     (release / "site-manifest.json").write_text(json.dumps(dict(schema_version=1, site_sha256=SITE_SHA, files=SITE_FILES)))
     root = campaign.initialize(release / "manifest.json", tmp_path / "private-attempt")
     ledger = campaign.load(root / "attempt.json")
@@ -216,12 +217,26 @@ def delivery_export(report, manifest, *, offline=False):
 
 def test_init_private_blocked_non_overwriting(attempt):
     root = attempt[0]
-    assert root.stat().st_mode & 0o777 == 0o700
-    assert (root / "release.json").stat().st_mode & 0o777 == 0o600
+    if os.name != 'nt':
+        assert root.stat().st_mode & 0o777 == 0o700
+        assert (root / "release.json").stat().st_mode & 0o777 == 0o600
     assert campaign.assess(root)["status"] == "incomplete"
     assert {c["status"] for c in campaign.assess(root)["checks"].values()} == {"blocked"}
     with pytest.raises(FileExistsError):
         campaign.initialize(root.parent / "release/manifest.json", root)
+
+
+def test_private_metadata_does_not_require_posix_fchmod(tmp_path, monkeypatch):
+    monkeypatch.delattr(os, "fchmod", raising=False)
+    path = tmp_path / "private.json"
+    value = {"operator": "Synthetic \u00e9vidence"}
+    campaign.write_private(path, value)
+    assert json.loads(path.read_bytes()) == value
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o600
+    with pytest.raises(FileExistsError):
+        campaign.write_private(path, {"replacement": True})
+    assert json.loads(path.read_bytes()) == value
 
 
 def test_frozen_browser_files_cannot_be_replaced_without_invalidating_attempt(attempt):

@@ -56,7 +56,7 @@ def summarize_experiment(report):
     for case in report.get("configuration", {}).get("cases", []):
         rows = [r for r in report.get("results", []) if r.get("case") == case]
         reasons = []
-        control=spec.get("validation_control","none")
+        control = spec.get("validation_control", "none")
         pairs = spec.get("pairs", 0)
         if type(pairs) is not int or pairs < 6 or pairs > 40:
             reasons.append("At least six planned pairs required")
@@ -91,7 +91,8 @@ def summarize_experiment(report):
                 a, b = [indexed.get((pair, arm)) for arm in ("baseline", "comparison")]
                 if not a or not b:
                     continue
-                if a.get('fixture_seed')!=b.get('fixture_seed'):reasons.append('Fixture seeds differ within pair')
+                if a.get("fixture_seed") != b.get("fixture_seed"):
+                    reasons.append("Fixture seeds differ within pair")
                 if any(
                     a.get(k) is None or a[k] != b.get(k)
                     for k in ("thermal_start", "charging_start")
@@ -139,8 +140,9 @@ def summarize_experiment(report):
                     and (primary["ci95_percent"][0] > 0 or primary["ci95_percent"][1] < 0)
                 ),
                 outcome=(
-                    "validation_control" if control!="none" else
-                    "improvement_observed"
+                    "validation_control"
+                    if control != "none"
+                    else "improvement_observed"
                     if spec.get("kind") == "candidate"
                     and primary["mean_improvement_percent"] >= 5
                     and primary["ci95_percent"][0] > 0

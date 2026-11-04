@@ -200,11 +200,15 @@ def test_sustained_gate_requires_measured_native_frames(setup_campaign):
     assert campaign.evidence(plan, [value])[1]
 
 
-def test_package_path_traversal_and_symlinks_are_rejected(tmp_path):
+def test_package_path_traversal_is_rejected(tmp_path):
     (tmp_path / "file").write_text("value")
     with pytest.raises(ValueError, match="relative"):
         package.contained(tmp_path, "../file")
-    (tmp_path / "link").symlink_to(tmp_path / "file")
+
+
+def test_package_symlinks_are_rejected(tmp_path, make_symlink):
+    (tmp_path / "file").write_text("value")
+    make_symlink(tmp_path / "link", tmp_path / "file")
     with pytest.raises(ValueError, match="Symlinks"):
         package.contained(tmp_path, "link")
 

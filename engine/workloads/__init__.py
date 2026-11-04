@@ -9,9 +9,11 @@ ROOT = Path(__file__).parent
 
 
 def catalog(profile="standard"):
-    if profile not in ("standard", "development"):raise ValueError("Unknown workload suite")
-    spec=json.loads((ROOT / "catalog.json").read_text())
-    if profile=="development":spec["cases"]+=json.loads((ROOT/"development.json").read_text())["cases"]
+    if profile not in ("standard", "development"):
+        raise ValueError("Unknown workload suite")
+    spec = json.loads((ROOT / "catalog.json").read_text())
+    if profile == "development":
+        spec["cases"] += json.loads((ROOT / "development.json").read_text())["cases"]
     return spec
 
 
@@ -27,8 +29,7 @@ def _definition(operation):
 def revision():
     sources = [p for p in ROOT.iterdir() if p.suffix in (".py", ".json")]
     for operation in OPERATIONS:
-        sources.extend(p for p in (ROOT / operation).rglob("*")
-                       if p.suffix in (".py", ".json"))
+        sources.extend(p for p in (ROOT / operation).rglob("*") if p.suffix in (".py", ".json"))
     identity = hashlib.sha256()
     for path in sorted(sources):
         identity.update(path.relative_to(ROOT).as_posix().encode() + b"\0")
@@ -51,18 +52,24 @@ def fixtures(case, seed=None):
     p = case.get("params", {})
     definition = _definition(case["operation"])
 
-    def rand(shape, scale=.3):
+    def rand(shape, scale=0.3):
         return (rng.normal(size=shape) * scale).astype(np.float32)
 
-    inputs = [rng.integers(0, p["vocab_size"], s["shape"], dtype=np.int64)
-              if s["dtype"] == "int64" else rand(s["shape"]) for s in case["inputs"]]
+    inputs = [
+        rng.integers(0, p["vocab_size"], s["shape"], dtype=np.int64)
+        if s["dtype"] == "int64"
+        else rand(s["shape"])
+        for s in case["inputs"]
+    ]
     if p.get("pattern") == "constant":
-        inputs[0].fill(.75)
+        inputs[0].fill(0.75)
     if p.get("pattern") == "large":
         inputs[0] += 1000
     if hasattr(definition, "prepare_inputs"):
         definition.prepare_inputs(case, inputs)
-    weights = definition.make_weights(case, inputs, rand) if hasattr(definition, "make_weights") else {}
+    weights = (
+        definition.make_weights(case, inputs, rand) if hasattr(definition, "make_weights") else {}
+    )
     return tuple(inputs), weights
 
 
@@ -75,12 +82,21 @@ def reference(case, inputs, weights):
 
 
 def correctness(actual, expected, atol=1e-4, rtol=1e-4):
-    if actual.shape != expected.shape or not np.isfinite(actual).all() or not np.isfinite(expected).all():
+    if (
+        actual.shape != expected.shape
+        or not np.isfinite(actual).all()
+        or not np.isfinite(expected).all()
+    ):
         return dict(passed=False, reason="shape mismatch or non-finite value")
     error = np.abs(actual.astype(np.float64) - expected.astype(np.float64))
     ratio = error / (atol + rtol * np.abs(expected.astype(np.float64)))
-    return dict(passed=bool((ratio <= 1).all()), max_abs_error=float(error.max()),
-                max_tolerance_ratio=float(ratio.max()), atol=atol, rtol=rtol)
+    return dict(
+        passed=bool((ratio <= 1).all()),
+        max_abs_error=float(error.max()),
+        max_tolerance_ratio=float(ratio.max()),
+        atol=atol,
+        rtol=rtol,
+    )
 
 
 def module(case, weights):

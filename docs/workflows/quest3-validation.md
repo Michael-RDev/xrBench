@@ -32,7 +32,8 @@ Choose a fresh attempt ID. `init` checks the APK bytes and package/signing ident
 copies the release manifest, records Git provenance, and creates `attempt.json`
 and `checklist.md` with all 22 physical checks blocked. It refuses an existing
 directory, a served destination, or a non-ignored path inside the repository.
-Attempt directories have mode 0700; generated evidence metadata has mode 0600.
+On POSIX, attempt directories have mode 0700 and generated evidence metadata has
+mode 0600. Windows files inherit the private attempt directory's access permissions.
 It also verifies the build's `site-manifest.json` and freezes the actual HTML,
 JavaScript and CSS under `site/`, with their identity in `site.json`. Browser assets
 use integrity hashes. A website change requires a new attempt even when the APK

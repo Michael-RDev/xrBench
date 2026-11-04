@@ -5,6 +5,19 @@ import {sha256, runPattern, EvidenceError} from './evidence.mjs';
 
 const quote = value => "'" + String(value).replaceAll("'", "'\\''") + "'";
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+const pendingUsb = new WeakMap();
+const quiet = action => {try {return Promise.resolve(action()).catch(() => {});} catch {return Promise.resolve();}};
+// USB, IndexedDB, and Tango socket-open promises do not all observe AbortSignal.
+// Always consume their eventual result, but stop awaiting them at our deadline.
+function abortable(task, signal) {
+  return new Promise((resolve, reject) => {
+    const finish = callback => value => {signal.removeEventListener('abort', abort); callback(value);};
+    const abort = () => finish(reject)(signal.reason);
+    Promise.resolve(task).then(finish(resolve), finish(reject));
+    signal.addEventListener('abort', abort, {once: true});
+    if (signal.aborted) abort();
+  });
+}
 export class MissingFile extends Error {}
 export class ConnectionError extends Error {
   constructor(code, message, cause) {super(message, {cause}); this.name = 'ConnectionError'; this.code = code;}
@@ -59,37 +72,63 @@ export class WebUsbTransport {
   async connect(device, signal, message = () => {}) {
     signal?.throwIfAborted();
     if (this.adb && this.device?.serial === device.serial) return;
-    await this.close(); this.device = device;
-    const cancel = () => {void device.raw.close().catch(() => {});};
+    await this.close();
+    signal?.throwIfAborted();
+    if (pendingUsb.has(device.raw)) throw new ConnectionError('usb_busy',
+      'The previous USB connection is still closing. Reconnect the USB cable or reload this tab, then retry.');
+    this.device = device;
+    const attempt = new AbortController();
+    this.connecting = attempt;
+    pendingUsb.set(device.raw, attempt);
+    const cancel = () => attempt.abort(signal.reason);
     signal?.addEventListener('abort', cancel, {once: true});
-    let timedOut = false, stage = 'opening';
-    const progress = (next, text) => {stage = next; message(text);};
-    const expire = () => {timedOut = true; cancel();};
+    let stage = 'opening', closing;
+    const closeRaw = () => closing ||= quiet(() => device.raw.close()).finally(() => {closing = null;});
+    attempt.signal.addEventListener('abort', () => {void closeRaw();}, {once: true});
+    const progress = (next, text) => {attempt.signal.throwIfAborted(); stage = next; message(text);};
+    const expire = () => {
+      const detail = stage === 'approval'
+        ? ['approval_timeout', 'USB debugging approval timed out. Put on the headset, allow USB debugging, then retry.']
+        : stage === 'credentials'
+          ? ['credential_timeout', 'The browser could not read or prepare its USB debugging key. Reload this website, then retry.']
+          : ['usb_timeout', stage === 'opening'
+            ? 'Opening the headset USB interface timed out. Close other headset tools, reconnect the USB cable, then retry.'
+            : 'The headset did not finish the USB handshake. Reconnect the USB cable and retry.'];
+      attempt.abort(new ConnectionError(...detail));
+    };
     let timer = setTimeout(expire, 60000);
-    try {
+    const opening = (async () => {
       progress('opening', 'Opening the headset USB interface…');
       const connection = await device.connect();
-      signal?.throwIfAborted();
+      attempt.signal.throwIfAborted();
       progress('handshake', 'USB opened · waiting for the headset to respond…');
       const credentials = this.credentials ||= new AdbWebCredentialStore('xrBench@' + location.host);
       const credentialStore = {
         async *iterateKeys() {
           progress('credentials', 'Reading this browser’s saved USB debugging key…');
-          for await (const key of credentials.iterateKeys()) {
-            progress('handshake', 'Checking this browser’s USB debugging permission…');
-            yield key;
+          const keys = credentials.iterateKeys()[Symbol.asyncIterator]();
+          try {
+            while (true) {
+              const {value: key, done} = await abortable(keys.next(), attempt.signal);
+              if (done) break;
+              progress('handshake', 'Checking this browser’s USB debugging permission…');
+              yield key;
+            }
+          } finally {
+            void quiet(() => keys.return?.());
           }
           progress('handshake', 'Checking this browser’s USB debugging permission…');
         },
         async generateKey() {
           progress('credentials', 'Preparing this browser’s USB debugging key…');
-          const key = await credentials.generateKey();
+          const key = await abortable(credentials.generateKey(), attempt.signal);
           progress('handshake', 'Requesting USB debugging permission…');
           return key;
         },
       };
       const authenticators = ADB_DEFAULT_AUTHENTICATORS.map(authenticate => async function* (store, request) {
         for await (const packet of authenticate(store, request)) {
+          attempt.signal.throwIfAborted();
           if (packet.arg0 === AdbAuthType.PublicKey) {
             // Start the human approval window only once the key is ready.
             // Reaching the Quest menu can take longer than the USB handshake.
@@ -101,39 +140,70 @@ export class WebUsbTransport {
       });
       const transport = await AdbDaemonTransport.authenticate({serial: device.serial, connection,
         credentialStore, authenticators});
-      signal?.throwIfAborted();
+      if (attempt.signal.aborted) {
+        await quiet(() => transport.close());
+        attempt.signal.throwIfAborted();
+      }
+      return transport;
+    })();
+    // Keep ownership until late opening/authentication and cleanup settle. A stale
+    // attempt must never close a new connection to the same raw USBDevice.
+    void opening.then(async () => {
+      if (attempt.signal.aborted) await closeRaw();
+    }, async () => {
+      if (device.raw.opened || closing) await closeRaw();
+    }).finally(() => {
+      if (pendingUsb.get(device.raw) === attempt) pendingUsb.delete(device.raw);
+    });
+    try {
+      const transport = await abortable(opening, attempt.signal);
+      attempt.signal.throwIfAborted();
       this.adb = new Adb(transport);
       const current = this.adb;
       current.disconnected.then(() => {if (this.adb === current) this.adb = null;}, () => {if (this.adb === current) this.adb = null;});
       if (!this.adb.subprocess.shellProtocol) throw Error('This headset does not support the required Android shell protocol.');
     } catch (error) {
-      await this.close();
-      if (!timedOut) throw connectionError(error);
-      const detail = stage === 'approval'
-        ? ['approval_timeout', 'USB debugging approval timed out. Put on the headset, allow USB debugging, then retry.']
-        : stage === 'credentials'
-          ? ['credential_timeout', 'The browser could not read or prepare its USB debugging key. Reload this website, then retry.']
-          : ['usb_timeout', stage === 'opening'
-            ? 'Opening the headset USB interface timed out. Close other headset tools, reconnect the USB cable, then retry.'
-            : 'The headset did not finish the USB handshake. Reconnect the USB cable and retry. No benchmark was started.'];
-      throw new ConnectionError(...detail, error);
+      if (this.connecting === attempt) {
+        const adb = this.adb; this.adb = null; this.device = null;
+        if (adb) void quiet(() => adb.close());
+      }
+      throw connectionError(error);
     }
-    finally {clearTimeout(timer); signal?.removeEventListener('abort', cancel);}
+    finally {
+      clearTimeout(timer); signal?.removeEventListener('abort', cancel);
+      if (this.connecting === attempt) this.connecting = null;
+    }
   }
   async close() {
-    const adb = this.adb, device = this.device; this.adb = null; this.device = null;
-    try {await adb?.close();} catch {}
-    try {if (device?.raw.opened) await device.raw.close();} catch {}
+    const adb = this.adb, device = this.device, attempt = this.connecting;
+    this.adb = null; this.device = null; this.connecting = null;
+    attempt?.abort(new DOMException('Connection closed', 'AbortError'));
+    if (!adb && !device) return;
+    const cleanup = Promise.all([quiet(() => adb?.close()), quiet(() => device?.raw.opened && device.raw.close())]);
+    if (device && !pendingUsb.has(device.raw)) {
+      pendingUsb.set(device.raw, cleanup);
+      void cleanup.then(() => {if (pendingUsb.get(device.raw) === cleanup) pendingUsb.delete(device.raw);});
+    }
+    let timer;
+    try {await Promise.race([cleanup, new Promise(resolve => {timer = setTimeout(resolve, 1000);})]);}
+    finally {clearTimeout(timer);}
   }
   async shell(args, {data, signal, timeout = 15000, limit = 64 * 1024 ** 2, allowFailure = false, onWrite} = {}) {
-    if (!this.adb) throw Error('Headset disconnected. Reconnect and retry to recover this run.');
+    const adb = this.adb;
+    if (!adb) throw Error('Headset disconnected. Reconnect and retry to recover this run.');
     const abort = new AbortController(), cancel = () => abort.abort(signal.reason);
     signal?.throwIfAborted(); signal?.addEventListener('abort', cancel, {once: true});
     const timer = setTimeout(() => abort.abort(Error('The device did not respond. Keep USB connected and retry the connection.')), timeout);
     let process, completed = false;
     try {
       // Tango joins array entries with spaces; shell-quote every argument ourselves.
-      process = await this.adb.subprocess.shellProtocol.spawn(args.map(quote), abort.signal);
+      // Own cancellation here: Tango's abort listener drops socket.close()
+      // rejections. Our bounded waits and late cleanup consume those failures.
+      const spawning = adb.subprocess.shellProtocol.spawn(args.map(quote));
+      void Promise.resolve(spawning).then(late => {
+        if (abort.signal.aborted) {void quiet(() => late.exited); void quiet(() => late.kill());}
+      }, () => {});
+      process = await abortable(spawning, abort.signal);
       const input = async () => {
         // Read-only commands need no stdin traffic. Their exit can precede a
         // CloseStdin acknowledgement, which Tango correctly rejects as closed.
@@ -155,17 +225,18 @@ export class WebUsbTransport {
       };
       // Drain the command's diagnostic even if it rejects stdin early (for
       // example, an install failure before the APK has finished streaming).
-      const [stdout, stderr, code, inputError] = await Promise.all([collect(process.stdout, limit), collect(process.stderr, 1024 ** 2), process.exited,
-        input().then(() => null, error => error)]);
+      const [stdout, stderr, code, inputError] = await abortable(Promise.all([collect(process.stdout, limit), collect(process.stderr, 1024 ** 2), process.exited,
+        input().then(() => null, error => error)]), abort.signal);
       abort.signal.throwIfAborted();
       if (code && !allowFailure) throw Error(stderr.trim() || stdout.trim() || 'Headset command failed');
       if (!code && inputError) throw inputError;
       completed = true; return {stdout, stderr, code};
     } catch (error) {
+      if (abort.signal.aborted && this.adb === adb) void this.close();
       throw Error(`Android ${args.slice(0, 2).join(' ')}: ${error.message}`, {cause: error});
     } finally {
       clearTimeout(timer); signal?.removeEventListener('abort', cancel);
-      if (!completed) {try {await process?.kill();} catch {}}
+      if (!completed) {abort.abort(); void quiet(() => process?.kill());}
     }
   }
   async properties(signal) {

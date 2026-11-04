@@ -65,9 +65,10 @@ def test_production_bundle_never_contacts_a_local_service(web_build):
     output = ROOT / 'artifacts/web-distribution-test'
     env = dict(os.environ, XRBENCH_WEB_OUTPUT=str(output), XRBENCH_RUNNER_BUILD=str(web_build), XRBENCH_PYTHON=sys.executable)
     subprocess.run(['node', 'scripts/build-web.mjs'], cwd=ROOT, env=env, check=True, capture_output=True, text=True)
-    checked = subprocess.run(['node', '--experimental-vm-modules', 'scripts/verify-web.mjs', str(output)],
-                             cwd=ROOT, check=True, capture_output=True, text=True)
-    assert 'no localhost/API requests' in checked.stdout
+    # The verifier asserts network destinations, delivery and exact downloads.
+    # Its exit status is the contract; human-facing success wording may change.
+    subprocess.run(['node', '--experimental-vm-modules', 'scripts/verify-web.mjs', str(output)],
+                   cwd=ROOT, check=True, capture_output=True, text=True)
 
 
 def browser_contract(payload):

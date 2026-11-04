@@ -90,17 +90,20 @@ def test_package_inventory_prevents_native_code_substitution(package):
         operators.verify_package(package)
 
 
-def test_package_rejects_uninventoried_code_and_links(package):
+def test_package_rejects_uninventoried_code(package):
     (package / "unexpected.py").write_text("ignored executable")
     with pytest.raises(ValueError, match="Uninventoried"):
         operators.verify_package(package)
     (package / "unexpected.py").unlink()
+
+
+def test_package_rejects_links(package, make_symlink):
     header = package / "include/xrgpu/operators.h"
     contents = header.read_bytes()
     header.unlink()
     outside = package.parent / "outside.h"
     outside.write_bytes(contents)
-    header.symlink_to(outside)
+    make_symlink(header, outside)
     with pytest.raises(ValueError, match="links"):
         operators.verify_package(package)
 

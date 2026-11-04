@@ -58,14 +58,20 @@ def prepare_sources(destination, package=None):
             target.write_bytes(content)
 
     # Give the intentionally wrong shader its own registered name and binary hash.
-    for name in ('scalar','vec'):
-        original='xrbench_matmul_'+name
-        control='xrbench_incorrect_matmul_'+name
-        (destination/(control+'.glsl')).write_bytes((package/'matmul'/(original+'.glsl')).read_bytes())
-        template=yaml.safe_load((destination/(original+'.yaml')).read_text())
-        spec=template[original];spec['parameter_names_with_default_values']['INCORRECT']=True
-        for variant in spec['shader_variants']:variant['NAME']=variant['NAME'].replace('xrbench_','xrbench_incorrect_')
-        (destination/(control+'.yaml')).write_text(yaml.safe_dump({control:spec},sort_keys=False))
+    for name in ("scalar", "vec"):
+        original = "xrbench_matmul_" + name
+        control = "xrbench_incorrect_matmul_" + name
+        (destination / (control + ".glsl")).write_bytes(
+            (package / "matmul" / (original + ".glsl")).read_bytes()
+        )
+        template = yaml.safe_load((destination / (original + ".yaml")).read_text())
+        spec = template[original]
+        spec["parameter_names_with_default_values"]["INCORRECT"] = True
+        for variant in spec["shader_variants"]:
+            variant["NAME"] = variant["NAME"].replace("xrbench_", "xrbench_incorrect_")
+        (destination / (control + ".yaml")).write_text(
+            yaml.safe_dump({control: spec}, sort_keys=False)
+        )
 
 
 def manifest(native, compiler, package=None):
@@ -94,11 +100,14 @@ def manifest(native, compiler, package=None):
                 raise RuntimeError("Missing compiled shader: " + name)
             source = Path(template).relative_to(ROOT).as_posix()
             if variant == "candidate":
-                source = kernel_package.source_url("matmul/" + (
-                    "xrbench_matmul_vec.glsl"
-                    if "matmul_vec" in name
-                    else "xrbench_matmul_scalar.glsl"
-                ))
+                source = kernel_package.source_url(
+                    "matmul/"
+                    + (
+                        "xrbench_matmul_vec.glsl"
+                        if "matmul_vec" in name
+                        else "xrbench_matmul_scalar.glsl"
+                    )
+                )
             entries[name] = dict(
                 variant=variant,
                 validation_control="incorrect" if "incorrect" in name else "none",
@@ -106,10 +115,14 @@ def manifest(native, compiler, package=None):
                 source=source,
             )
     for tile in (1, 2):
-        name = f'resident_matmul_tile{tile}'
-        entries[name] = dict(variant='stock' if tile == 1 else 'candidate',
-            source=kernel_package.source_url('resident/matmul.comp'), backend='vulkan_resident', tile_rows=tile,
-            spirv_sha256=hashlib.sha256((native/(name+'.spv')).read_bytes()).hexdigest())
+        name = f"resident_matmul_tile{tile}"
+        entries[name] = dict(
+            variant="stock" if tile == 1 else "candidate",
+            source=kernel_package.source_url("resident/matmul.comp"),
+            backend="vulkan_resident",
+            tile_rows=tile,
+            spirv_sha256=hashlib.sha256((native / (name + ".spv")).read_bytes()).hexdigest(),
+        )
     if not any(e["variant"] == "candidate" for e in entries.values()):
         raise RuntimeError("Candidate shaders were not built")
     return dict(

@@ -199,8 +199,7 @@ def initialize(manifest_path, output):
     for name in (*site["files"], "site-manifest.json"):
         destination = output / "site" / name
         destination.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-        with destination.open("xb") as stream:
-            os.fchmod(stream.fileno(), 0o600)
+        with open(destination, "xb", opener=_private_opener) as stream:
             stream.write(read_evidence(site_directory / name))
     need(_equal(site_identity(output / "site"), site), "Browser files changed while freezing the attempt")
     (output / "release.json").write_bytes(release_bytes)
@@ -228,10 +227,14 @@ def initialize(manifest_path, output):
     return output
 
 
+def _private_opener(path, flags):
+    # Apply POSIX permissions at creation; Windows inherits the attempt's ACL.
+    # os.fchmod is not available on supported Windows Python versions.
+    return os.open(path, flags, 0o600)
+
+
 def write_private(path, value):
-    path = Path(path)
-    with path.open("x") as stream:
-        os.fchmod(stream.fileno(), 0o600)
+    with open(path, "x", encoding="utf-8", newline="\n", opener=_private_opener) as stream:
         json.dump(value, stream, indent=2, allow_nan=False)
         stream.write("\n")
 
