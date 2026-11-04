@@ -155,7 +155,15 @@ def ensure_release(*, force=False):
                 apk.is_file()
                 and hashlib.sha256(apk.read_bytes()).hexdigest() == manifest["apk_sha256"]
             ):
-                return ROOT / "dist"
+                from engine.headset_validation import site_identity
+
+                try:
+                    site_identity(ROOT / "dist")
+                except (OSError, ValueError, TypeError, AttributeError):
+                    # Missing, malformed or modified website assets require a rebuild.
+                    pass
+                else:
+                    return ROOT / "dist"
     from engine.public_build import build
 
     print("Preparing the verified native browser runner…", flush=True)
