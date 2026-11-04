@@ -139,15 +139,17 @@ function fixture(options = {}) {
     sleep: () => new Promise(r => pauses.push(r))});
   return {m, store, transport, controller, launches, stops, calls, reports, get releaseCount() {return releaseCount;},
     available: () => {reportAvailable = true;}, disconnect: () => {connected = false;}, connect: () => {connected = true;},
-    async step({wait = true} = {}) {
-      const pending = pauses; pauses = []; pending.forEach(r => r()); await settle();
+    async waitForPause() {
+      await settle();
       // WebCrypto hashes complete on a worker thread, not after a fixed number
       // of event-loop turns. Wait for the next controller sleep or worker exit.
-      if (wait) {
-        const deadline = Date.now() + 3000;
-        while (controller.workers.size && !pauses.length && Date.now() < deadline) await new Promise(r => setTimeout(r, 5));
-        assert.ok(!controller.workers.size || pauses.length, 'Controller did not settle');
-      }
+      const deadline = Date.now() + 3000;
+      while (controller.workers.size && !pauses.length && Date.now() < deadline) await new Promise(r => setTimeout(r, 5));
+      assert.ok(!controller.workers.size || pauses.length, 'Controller did not settle');
+    },
+    async step({wait = true} = {}) {
+      const pending = pauses; pauses = []; pending.forEach(r => r());
+      if (wait) await this.waitForPause(); else await settle();
     },
     async start(processor) {
       if(options.legacy) {
@@ -237,7 +239,7 @@ test('refresh after uncertain launch recovers the same run without replaying ins
     const s = await f.start(); await f.step(); assert.equal(s.status, 'disconnected');
     const config = f.launches[0]; await f.close();
     g = fixture({store: f.store, previousConfig: config}); g.available();
-    await g.controller.snapshot(); await settle();
+    await g.controller.snapshot(); await g.waitForPause();
     assert.equal(g.launches.length, 0); assert.deepEqual(g.calls, ['connect']);
     assert.equal(g.controller.sessions[0].phases[0].run_id, config.run_id);
     assert.equal(g.controller.sessions[0].current_phase, 1);
