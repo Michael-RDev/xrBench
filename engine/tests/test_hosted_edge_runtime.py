@@ -116,18 +116,21 @@ def test_real_deno_bundle_auth_quota_rpc_and_full_native_report(hosted_db, submi
         + json.dumps(manifest) + ']}));\n'
     )
     hosted_db.policy(principal_daily_attempts=2)
-    with upstream_bridge(hosted_db) as (upstream, calls), (tmp_path / 'deno.log').open('w') as log:
+    log_path = tmp_path / 'deno.log'
+    with upstream_bridge(hosted_db) as (upstream, calls), log_path.open('w') as log:
         environment = dict(os.environ, SUPABASE_URL=upstream, SUPABASE_SERVICE_ROLE_KEY=SERVICE_KEY,
                            XRBENCH_ALLOWED_ORIGINS=json.dumps([ORIGIN]),
                            DENO_DIR=str(tmp_path / 'deno-cache'))
+        environment.pop('XRBENCH_UPLOAD_PROXY_SECRET', None)
         process = subprocess.Popen([deno, 'run', '--no-prompt', '--no-lock',
-            '--allow-env=SUPABASE_URL,SUPABASE_SERVICE_ROLE_KEY,XRBENCH_ALLOWED_ORIGINS',
+            '--allow-env=SUPABASE_URL,SUPABASE_SERVICE_ROLE_KEY,XRBENCH_ALLOWED_ORIGINS,XRBENCH_UPLOAD_PROXY_SECRET',
             '--allow-net=127.0.0.1', str(entry)], env=environment, stdout=log, stderr=log)
         try:
             deadline = time.monotonic() + 15
             while True:
                 if process.poll() is not None:
-                    pytest.fail('The production Deno adapter could not start; inspect the isolated runtime log')
+                    pytest.fail('The production Deno adapter could not start:\n'
+                                + log_path.read_text(encoding='utf-8')[-8000:])
                 try:
                     with socket.create_connection(('127.0.0.1', port), timeout=.1):
                         break
