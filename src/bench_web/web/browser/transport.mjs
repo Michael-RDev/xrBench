@@ -7,6 +7,19 @@ const quote = value => "'" + String(value).replaceAll("'", "'\\''") + "'";
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const pendingUsb = new WeakMap();
 const quiet = action => {try {return Promise.resolve(action()).catch(() => {});} catch {return Promise.resolve();}};
+function retainUsb(raw, cleanup) {
+  const settled = Promise.all([pendingUsb.get(raw), cleanup]);
+  pendingUsb.set(raw, settled);
+  void settled.then(() => {if (pendingUsb.get(raw) === settled) pendingUsb.delete(raw);});
+  return settled;
+}
+function requireDeviceIdentity(device) {
+  // Tango substitutes vendor/product IDs when the USB serial is absent. Those
+  // identify a model, not a headset, and cannot safely recover a saved run.
+  if (!device.serial || (device instanceof AdbDaemonWebUsbDevice && !device.raw.serialNumber))
+    throw new EvidenceError('This headset has no stable USB identity and cannot be safely recovered.');
+  return device;
+}
 // USB, IndexedDB, and Tango socket-open promises do not all observe AbortSignal.
 // Always consume their eventual result, but stop awaiting them at our deadline.
 function abortable(task, signal) {
@@ -64,27 +77,47 @@ export class WebUsbTransport {
     if (!this.supported) return Promise.reject(Error('Use desktop Chrome or Edge on the HTTPS website to connect a headset.'));
     const known = this.devices.find(d => d.serial === serial) || (!serial && this.devices.length === 1 ? this.devices[0] : null);
     // Invoke the chooser before any await: WebUSB requires the Run click's activation.
-    return known ? Promise.resolve(known) : this.manager.requestDevice().then(device => {
+    return known ? Promise.resolve(known).then(requireDeviceIdentity) : this.manager.requestDevice().then(device => {
       if (!device) throw new DOMException('No headset selected', 'NotFoundError');
-      return device;
+      return requireDeviceIdentity(device);
     });
   }
   async connect(device, signal, message = () => {}) {
     signal?.throwIfAborted();
-    if (this.adb && this.device?.serial === device.serial) return;
-    await this.close();
-    signal?.throwIfAborted();
+    requireDeviceIdentity(device);
+    if (this.connecting) throw new ConnectionError('usb_busy',
+      'A headset connection is already in progress. Wait for it to finish or stop it before retrying.');
+    if (this.adb && this.device?.raw === device.raw) return;
+    // Reserve the instance before close() yields, so two requests cannot both
+    // authenticate and publish connections for different headsets.
+    const attempt = new AbortController();
+    this.connecting = attempt;
+    const cancel = () => attempt.abort(signal.reason);
+    signal?.addEventListener('abort', cancel, {once: true});
+    try {
+      await this.#connect(device, attempt, message);
+      attempt.signal.throwIfAborted();
+    } catch (error) {
+      if (this.connecting === attempt) {
+        const adb = this.adb;
+        this.adb = null; this.device = null;
+        if (adb) retainUsb(device.raw, quiet(() => adb.close()));
+      }
+      throw connectionError(error);
+    } finally {
+      signal?.removeEventListener('abort', cancel);
+      if (this.connecting === attempt) this.connecting = null;
+    }
+  }
+  async #connect(device, attempt, message) {
+    await this.#close(attempt);
+    attempt.signal.throwIfAborted();
     if (pendingUsb.has(device.raw)) throw new ConnectionError('usb_busy',
       'The previous USB connection is still closing. Reconnect the USB cable or reload this tab, then retry.');
     this.device = device;
-    const attempt = new AbortController();
-    this.connecting = attempt;
-    pendingUsb.set(device.raw, attempt);
-    const cancel = () => attempt.abort(signal.reason);
-    signal?.addEventListener('abort', cancel, {once: true});
     let stage = 'opening', closing;
     const closeRaw = () => closing ||= quiet(() => device.raw.close()).finally(() => {closing = null;});
-    attempt.signal.addEventListener('abort', () => {void closeRaw();}, {once: true});
+    attempt.signal.addEventListener('abort', () => {retainUsb(device.raw, closeRaw());}, {once: true});
     const progress = (next, text) => {attempt.signal.throwIfAborted(); stage = next; message(text);};
     const expire = () => {
       const detail = stage === 'approval'
@@ -97,7 +130,8 @@ export class WebUsbTransport {
       attempt.abort(new ConnectionError(...detail));
     };
     let timer = setTimeout(expire, 60000);
-    const opening = (async () => {
+    // Register the settlement promise before any callback can close this request.
+    const opening = Promise.resolve().then(async () => {
       progress('opening', 'Opening the headset USB interface…');
       const connection = await device.connect();
       attempt.signal.throwIfAborted();
@@ -140,50 +174,48 @@ export class WebUsbTransport {
       });
       const transport = await AdbDaemonTransport.authenticate({serial: device.serial, connection,
         credentialStore, authenticators});
-      if (attempt.signal.aborted) {
-        await quiet(() => transport.close());
+      try {
         attempt.signal.throwIfAborted();
+        const current = new Adb(transport);
+        if (!current.subprocess.shellProtocol) throw Error('This headset does not support the required Android shell protocol.');
+        this.adb = current;
+        current.disconnected.then(() => {if (this.adb === current) this.adb = null;}, () => {if (this.adb === current) this.adb = null;});
+      } catch (error) {
+        // Fail the caller and start raw USB cleanup immediately. This operation
+        // retains ownership while the authenticated transport finishes closing.
+        attempt.abort(error);
+        await quiet(() => transport.close());
+        throw error;
       }
-      return transport;
-    })();
+    });
     // Keep ownership until late opening/authentication and cleanup settle. A stale
     // attempt must never close a new connection to the same raw USBDevice.
-    void opening.then(async () => {
+    const settled = opening.then(async () => {
       if (attempt.signal.aborted) await closeRaw();
     }, async () => {
       if (device.raw.opened || closing) await closeRaw();
     }).finally(() => {
-      if (pendingUsb.get(device.raw) === attempt) pendingUsb.delete(device.raw);
+      if (pendingUsb.get(device.raw) === settled) pendingUsb.delete(device.raw);
     });
+    pendingUsb.set(device.raw, settled);
     try {
-      const transport = await abortable(opening, attempt.signal);
+      await abortable(opening, attempt.signal);
       attempt.signal.throwIfAborted();
-      this.adb = new Adb(transport);
-      const current = this.adb;
-      current.disconnected.then(() => {if (this.adb === current) this.adb = null;}, () => {if (this.adb === current) this.adb = null;});
-      if (!this.adb.subprocess.shellProtocol) throw Error('This headset does not support the required Android shell protocol.');
-    } catch (error) {
-      if (this.connecting === attempt) {
-        const adb = this.adb; this.adb = null; this.device = null;
-        if (adb) void quiet(() => adb.close());
-      }
-      throw connectionError(error);
-    }
-    finally {
-      clearTimeout(timer); signal?.removeEventListener('abort', cancel);
-      if (this.connecting === attempt) this.connecting = null;
-    }
+    } finally {clearTimeout(timer);}
   }
-  async close() {
+  async close() {await this.#close();}
+  async #close(keepAttempt) {
     const adb = this.adb, device = this.device, attempt = this.connecting;
-    this.adb = null; this.device = null; this.connecting = null;
-    attempt?.abort(new DOMException('Connection closed', 'AbortError'));
-    if (!adb && !device) return;
-    const cleanup = Promise.all([quiet(() => adb?.close()), quiet(() => device?.raw.opened && device.raw.close())]);
-    if (device && !pendingUsb.has(device.raw)) {
-      pendingUsb.set(device.raw, cleanup);
-      void cleanup.then(() => {if (pendingUsb.get(device.raw) === cleanup) pendingUsb.delete(device.raw);});
+    this.adb = null; this.device = null;
+    if (attempt !== keepAttempt) {
+      this.connecting = null;
+      attempt?.abort(new DOMException('Connection closed', 'AbortError'));
     }
+    if (!adb && !device) return;
+    // Join setup's existing ownership with every close operation. Setup may
+    // settle before authenticated cleanup, including immediately after connect().
+    let cleanup = Promise.all([quiet(() => adb?.close()), quiet(() => device?.raw.opened && device.raw.close())]);
+    if (device) cleanup = retainUsb(device.raw, cleanup);
     let timer;
     try {await Promise.race([cleanup, new Promise(resolve => {timer = setTimeout(resolve, 1000);})]);}
     finally {clearTimeout(timer);}
