@@ -11,6 +11,7 @@ export class BrowserController {
     Object.assign(this, {transport, store, manifestUrl, delivery, fetcher, lock, sleep});
     this.sessions = []; this.workers = new Map(); this.starting = false; this.disposed = false; this.deviceRows = new Map();
     this.resuming = new Map(); this.lastDevices = null;
+    this.transportTask = Promise.resolve();
     this.pageId = pageId;
     this.siteSha256 = siteSha256;
   }
@@ -153,35 +154,40 @@ export class BrowserController {
       validateManifest(old.manifest);
       if(device.serial!==old.serial)throw Error('Reconnect the headset with the previous run before updating its runner.');
       release=await this.lock(old.serial);
-      await this.transport.connect(device);
-      const installed=await this.transport.installedHash(old.manifest);
-      this.event(old,'update_requested',undefined,{next_apk_sha256:this.manifest.apk_sha256});
-      const capture=async phase=>{
-        try{
-          const native=await this.transport.read(old.manifest,phase.run_id,'report.json');
-          validateReport(native,phase.configuration,old.manifest.catalog,{partial:true});
-          await this.store.saveReport(phase.run_id,{native,report:summarize(native)});
-          phase.run??={run_id:phase.run_id,configuration:structuredClone(phase.configuration),storage:'browser'};
-          Object.assign(phase.run,{report_available:true,status:native.status});
-          phase.status=native.status;
-        }catch(error){if(!(error instanceof MissingFile))throw error;}
-      };
-      if(installed){
-        for(const phase of old.phases)if(phase.attempted){await capture(phase);}
-        // This package is a validated xrBench helper, never an arbitrary app.
-        // Stop its GPU work before the next release can benchmark; retain all files.
-        if(old.phases.some(p=>p.attempted&&!terminal.has(p.status))){
-          for(const phase of old.phases)if(phase.attempted&&!terminal.has(phase.status))await this.transport.stop(old.manifest,phase.run_id);
-          await this.transport.shell(['am','force-stop',old.manifest.package]);
-          for(const phase of old.phases)if(phase.attempted)await capture(phase);
-        }
-      }
-      old.error='Previous runner retired for an update. Existing reports and application data are preserved.';
-      await this.finish(old,'canceled');
-      this.event(old,'retired_for_update',undefined,{next_apk_sha256:this.manifest.apk_sha256});
-      await this.save(old);
+      await this.#useTransport(async () => {
+        try {
+          if (this.disposed) throw new DOMException('Connection closed', 'AbortError');
+          await this.transport.connect(device);
+          const installed=await this.transport.installedHash(old.manifest);
+          this.event(old,'update_requested',undefined,{next_apk_sha256:this.manifest.apk_sha256});
+          const capture=async phase=>{
+            try{
+              const native=await this.transport.read(old.manifest,phase.run_id,'report.json');
+              validateReport(native,phase.configuration,old.manifest.catalog,{partial:true});
+              await this.store.saveReport(phase.run_id,{native,report:summarize(native)});
+              phase.run??={run_id:phase.run_id,configuration:structuredClone(phase.configuration),storage:'browser'};
+              Object.assign(phase.run,{report_available:true,status:native.status});
+              phase.status=native.status;
+            }catch(error){if(!(error instanceof MissingFile))throw error;}
+          };
+          if(installed){
+            for(const phase of old.phases)if(phase.attempted){await capture(phase);}
+            // This package is a validated xrBench helper, never an arbitrary app.
+            // Stop its GPU work before the next release can benchmark; retain all files.
+            if(old.phases.some(p=>p.attempted&&!terminal.has(p.status))){
+              for(const phase of old.phases)if(phase.attempted&&!terminal.has(phase.status))await this.transport.stop(old.manifest,phase.run_id);
+              await this.transport.shell(['am','force-stop',old.manifest.package]);
+              for(const phase of old.phases)if(phase.attempted)await capture(phase);
+            }
+          }
+          old.error='Previous runner retired for an update. Existing reports and application data are preserved.';
+          await this.finish(old,'canceled');
+          this.event(old,'retired_for_update',undefined,{next_apk_sha256:this.manifest.apk_sha256});
+          await this.save(old);
+        } finally {await this.transport.close();}
+      });
     }finally{
-      try{await this.transport.close();}finally{release?.();this.starting=false;}
+      release?.();this.starting=false;
     }
     return this.start(device.serial,requestId,'gpu',device);
   }
@@ -200,11 +206,21 @@ export class BrowserController {
     }).finally(() => this.resuming.delete(s.session_id));
     this.resuming.set(s.session_id, task); return task;
   }
+  #useTransport(action) {
+    // Workers and runner updates share one transport. Hold it through cleanup,
+    // even after Stop has marked a session terminal and enabled another Run.
+    const task = this.transportTask.then(action);
+    this.transportTask = task.catch(() => {});
+    return task;
+  }
   work(s, device, release) {
     const worker = {abort: new AbortController(), release, task: null};
     this.workers.set(s.session_id, worker);
-    worker.task = this.run(s, device, worker).finally(async () => {
-      try {await this.transport.close();} finally {release(); this.workers.delete(s.session_id);}
+    worker.task = this.#useTransport(async () => {
+      try {if (!this.disposed) await this.run(s, device, worker);}
+      finally {
+        try {await this.transport.close();} finally {release(); this.workers.delete(s.session_id);}
+      }
     });
     // Persistence failure must be visible, and must never produce an unhandled task.
     worker.task.catch(e => {s.status = 'disconnected'; s.message = e.message;});
