@@ -106,8 +106,13 @@ public final class BenchmarkService extends Service {
             return START_NOT_STICKY;
         }
         // An uncertain browser launch is recovered, never replayed on Android restart.
-        if(worker!=null||Runner.active.get())return START_NOT_STICKY;
         final String id=intent.getStringExtra("run_id"),probe=intent.getStringExtra("probe_id");
+        if(worker!=null||Runner.active.get()){
+            if(probe!=null||!java.util.Objects.equals(id,runId))
+                StartupDiagnostic.write(getFilesDir(),probe,id,"native_busy",StartupDiagnostic.BUSY);
+            if(worker==null)stopSelf(startId);
+            return START_NOT_STICKY;
+        }
         try{
             if(probe!=null){
                 if(!probe.matches("probe-[0-9a-f]{32}"))throw new IllegalArgumentException("Invalid probe identity");
@@ -149,7 +154,7 @@ public final class BenchmarkService extends Service {
             worker.start();
         }catch(Exception|LinkageError error){
             Log.e("xrBench","Cannot start native benchmark worker",error);
-            if(id!=null&&id.matches("run-[0-9a-f]{32}"))try{Fileset.write(new File(getFilesDir(),"runs/"+id+"/startup-error.json"),new JSONObject().put("run_id",id).put("error","Native benchmark could not start: "+error));}catch(Exception ignored){}
+            StartupDiagnostic.write(getFilesDir(),probe,id,"native_start_failed","Native benchmark could not start: "+error);
             finish(startId);
         }
         return START_NOT_STICKY;

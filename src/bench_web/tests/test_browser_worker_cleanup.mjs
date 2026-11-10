@@ -127,11 +127,14 @@ test('runner updates wait for canceled worker cleanup before using the shared tr
     await f.controller.store.save(previous);
     f.controller.sessions.push(previous);
     updating = f.controller.upgrade(previous.session_id, 'updated-second');
+    await updating;
+    updating = f.controller.updates.get(previous.session_id).task;
     await nextTurn();
     assert.equal(f.second.opens, 0, 'Updating a runner must also wait for old preparation to finish');
     f.snapshot.resolve();
     await oldWorker.task;
-    const current = await updating;
+    await updating;
+    const current = f.controller.active();
     await f.secondInstallEntered.promise;
     assert.notEqual(current.session_id, previous.session_id);
     assert.equal(previous.status, 'canceled');

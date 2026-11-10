@@ -360,7 +360,7 @@ export class WebUsbTransport {
       } catch (e) {if (!(e instanceof MissingFile)) throw e;}
       await pause(250);
     }
-    throw Error('The native capability check did not respond. Reconnect USB and retry.');
+    throw new EvidenceError('The headset runner did not respond to its capability check. Another benchmark may still be running. Stop it from the headset\'s xrBench notification, then press Run again. Existing reports are preserved.');
   }
   async launch(manifest, config, signal) {
     if (!runPattern.test(config.run_id)) throw new EvidenceError('Invalid run identity');
@@ -404,20 +404,20 @@ export class WebUsbTransport {
     result.captured_at = new Date().toISOString();
     return result;
   }
-  async installationSnapshot(manifest) {
+  async installationSnapshot(manifest, signal) {
     const result = {kind: 'xrbench.installation-snapshot', package: manifest.package,
-      captured_at: new Date().toISOString(), apk_sha256: await this.installedHash(manifest)};
+      captured_at: new Date().toISOString(), apk_sha256: await this.installedHash(manifest, signal)};
     if (!result.apk_sha256) return {...result, installed: false};
     result.installed = true;
     result.connection_id = (await sha256(new TextEncoder().encode(this.device.serial))).slice(0, 24);
-    const dump = await this.shell(['dumpsys', 'package', manifest.package], {timeout: 5000, limit: 2 * 1024 ** 2});
+    const dump = await this.shell(['dumpsys', 'package', manifest.package], {signal, timeout: 5000, limit: 2 * 1024 ** 2});
     const version = /\bversionCode=(\d+)\b/.exec(dump.stdout);
     if (!version) throw Error('Cannot verify installed version');
     result.version_code = Number(version[1]); result.package_dump = dump.stdout;
-    const prefs = await this.shell(['run-as', manifest.package, 'cat', 'shared_prefs/device-profile.xml'], {allowFailure:true,limit:8192});
+    const prefs = await this.shell(['run-as', manifest.package, 'cat', 'shared_prefs/device-profile.xml'], {signal,allowFailure:true,limit:8192});
     result.installation_id = /<string name=["']id["']>([a-f0-9-]{36})<\/string>/.exec(prefs.stdout)?.[1] || null;
     const command = 'for file in files/runs/run-*/report.json; do if [ -f "$file" ]; then sha256sum "$file"; fi; done';
-    const reports = await this.shell(['run-as',manifest.package,'sh','-c',command], {limit:2 * 1024 ** 2});
+    const reports = await this.shell(['run-as',manifest.package,'sh','-c',command], {signal,limit:2 * 1024 ** 2});
     result.reports = reports.stdout.trim() ? reports.stdout.trim().split('\n').map(line => {
       const match = /^([a-f0-9]{64})\s+(files\/runs\/run-[a-f0-9]{32}\/report\.json)$/.exec(line);
       if (!match) throw Error('Invalid saved report inventory');
@@ -432,9 +432,9 @@ export class WebUsbTransport {
     if (result.code === 0 && /^\d+(?:\s+\d+)*$/.test(result.stdout.trim())) return true;
     throw Error('Could not check whether the headset runner is still running. Reconnect to recover this run.');
   }
-  async stop(manifest, id) {
+  async stop(manifest, id, signal) {
     if (!runPattern.test(id)) throw new EvidenceError('Invalid run identity');
     // Also preserve Stop when a disconnect happened before launch created its directory.
-    await this.shell(['run-as', manifest.package, 'sh', '-c', `mkdir -p files/runs/${id} && touch files/runs/${id}/cancel`]);
+    await this.shell(['run-as', manifest.package, 'sh', '-c', `mkdir -p files/runs/${id} && touch files/runs/${id}/cancel`], {signal});
   }
 }

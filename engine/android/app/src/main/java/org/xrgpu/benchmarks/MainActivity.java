@@ -14,16 +14,23 @@ public final class MainActivity extends Activity {
         label=new TextView(this);label.setTextSize(22);label.setPadding(32,32,32,32);setContentView(label);
         String probe=getIntent().getStringExtra("probe_id");
         if(probe!=null){
-            if(!probe.matches("probe-[0-9a-f]{32}")||Runner.active.get()){label.setText("Capability check unavailable during a run");return;}
+            if(!probe.matches("probe-[0-9a-f]{32}")){finish();return;}
+            if(Runner.active.get()){
+                StartupDiagnostic.write(getFilesDir(),probe,null,"native_busy",StartupDiagnostic.BUSY);finish();return;
+            }
             try{startForegroundService(new Intent(this,BenchmarkService.class).putExtra("probe_id",probe));finish();}
-            catch(Exception error){label.setText("Cannot check device capabilities: "+error);}
+            catch(Exception|LinkageError error){
+                StartupDiagnostic.write(getFilesDir(),probe,null,"native_start_failed","Cannot check device capabilities: "+error);finish();
+            }
             return;
         }
         String id=getIntent().getStringExtra("run_id");
         if(id==null){label.setText("xrGPU native benchmarks\nConnect USB and press Run on the website.");return;}
         try{
             Checks.identity(id);
-            if(Runner.active.get())throw new IllegalStateException("Another run is active");
+            if(Runner.active.get()){
+                StartupDiagnostic.write(getFilesDir(),null,id,"native_busy",StartupDiagnostic.BUSY);finish();return;
+            }
             if(new File(getFilesDir(),"runs/"+id+"/report.json").exists())throw new IllegalStateException("This run already has evidence; reconnect to recover it");
             if(Fileset.read(new File(getFilesDir(),"commands/"+id+".json")).getString("mode").equals("xr")){
                 if(BuildConfig.PUBLIC_NATIVE)throw new IllegalArgumentException("The native operator runner requires isolated compute");
@@ -31,6 +38,8 @@ public final class MainActivity extends Activity {
             }
             startForegroundService(new Intent(this,BenchmarkService.class).putExtra("run_id",id));
             finish();
-        }catch(Exception error){label.setText("Cannot start benchmark: "+error);}
+        }catch(Exception|LinkageError error){
+            StartupDiagnostic.write(getFilesDir(),null,id,"native_start_failed","Cannot start benchmark: "+error);finish();
+        }
     }
 }

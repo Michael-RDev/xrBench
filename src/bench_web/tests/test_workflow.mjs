@@ -87,6 +87,12 @@ async function page(kind,report=null,stateOverrides={},options={}){
       return s;
     },
     exportSession:async()=>({reports:[report]}),dispose:()=>{},
+    upgrade:async sessionId=>{
+      calls.push({path:'/api/benchmark-sessions/'+sessionId+'/upgrade'});
+      const s=state.benchmark_sessions.find(s=>s.session_id===sessionId);
+      Object.assign(s,{updating:true,connection_state:'connecting',message:'Allow USB debugging inside the headset'});
+      return structuredClone(s);
+    },
     retryReport:async runId=>{calls.push({path:'/api/reports/'+runId+'/retry'});const row=state.report_delivery?.reports.find(r=>r.run_id===runId);if(row)row.status='pending';},
     retry:async sessionId=>{
       calls.push({path:'/api/benchmark-sessions/'+sessionId+'/retry'});
@@ -1051,5 +1057,24 @@ test('unsupported GPU reason and Retry stay inline with no CPU phase or navigati
     assert.equal(doc.querySelector('#advanced-cpu').hidden,true);
     doc.querySelector('#retry-status').click();await drain();
     assert.equal(p.calls.filter(c=>c.body).length,1);assert.equal(p.window.location.pathname,'/');
+  }finally{p.close();}
+});
+
+ test('runner update keeps status polling and cancellation available',async()=>{
+  const old={session_id:benchId,status:'disconnected',runner_outdated:true,current_phase:0,created_at:1,
+    message:'A newer runner is available',phases:[{processor:'gpu',run_id:id,status:'pending'}]};
+  const p=await page('bench',null,{benchmark_sessions:[old],jobs:[]},{hosted:true,syncSession:false});
+  try{
+    const doc=p.window.document;
+    doc.getElementById('run').click();await drain();
+    assert.equal(doc.getElementById('run-label').textContent,'Cancel update');
+    assert.equal(doc.getElementById('run').disabled,false);
+    const polls=p.calls.filter(c=>c.path==='/api/status').length;
+    p.state.benchmark_sessions[0].message='Preserving the previous report';await p.tick();
+    assert.ok(p.calls.filter(c=>c.path==='/api/status').length>polls);
+    assert.match(doc.getElementById('run-status').textContent,/Preserving/);
+    doc.getElementById('run').click();await drain();
+    assert.equal(p.calls.filter(c=>c.path.endsWith('/stop')).length,1);
+    assert.equal(p.calls.filter(c=>c.path.endsWith('/upgrade')).length,1);
   }finally{p.close();}
 });

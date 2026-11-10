@@ -29,7 +29,7 @@ function job(){return status?.jobs.find(run=>run.run_id===selected);}
 function active(){return status?.jobs.find(run=>!terminal.has(run.status));}
 function hasNativeRun(parent){return !!parent?.phases.some(p=>p.attempted||p.run);}
 function hasNativeProgress(parent){return !!parent?.started_at||!!parent?.phases.some(p=>reports[p.run_id]||p.run?.progress||p.run?.status==='running');}
-function blockedConnection(){const parent=activeSession();return hosted&&parent?.status==='disconnected'&&parent.connection_state!=='connecting';}
+function blockedConnection(){const parent=activeSession();return hosted&&!parent?.updating&&parent?.status==='disconnected'&&parent.connection_state!=='connecting';}
 async function api(path,body){
   if(browserService)return browserService.request(path,body);
   const response=await fetch(path,{headers:{'X-XRGPU-Session':token,...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{method:'POST',body:JSON.stringify(body)})});
@@ -167,14 +167,14 @@ function render(){
   $('device-demo-badge').hidden=true;
   $('stats-link').href=frontendLink('/stats/',selected);$('stats-link').hidden=hosted;
   const parent=session(),running=activeSession()||active(),run=parent||job()||report;
-  const stopping=running?.cancel_requested;
+  const stopping=running?.cancel_requested||running?.update_cancel_requested;
   const blocked=blockedConnection(),preparing=hosted&&!!running?.phases&&!hasNativeRun(running);
   $('run-icon').textContent=running&&!blocked?'■':'▶';
-  $('run-label').textContent=stopping?'Stopping…':busy?(blocked?'Connecting…':running?'Stopping…':'Starting…'):running?.runner_outdated?'Update runner':blocked?'Retry connection':running?(preparing?'Cancel':'Stop'):'Run';
-  $('run').setAttribute('aria-label',running?.runner_outdated?'Update runner':blocked?'Retry connection':running?(preparing?'Cancel connection':'Stop benchmark'):'Run GPU benchmark');$('run').disabled=(!connected&&!running)||busy||!!stopping||(hosted&&status?.usb_supported===false&&!running);$('run').setAttribute('aria-busy',String(busy||!!stopping));
+  $('run-label').textContent=stopping?(running?.updating?'Canceling update…':'Stopping…'):busy?(blocked?'Connecting…':running?'Stopping…':'Starting…'):running?.updating?'Cancel update':running?.runner_outdated?'Update runner':blocked?'Retry connection':running?(preparing?'Cancel':'Stop'):'Run';
+  $('run').setAttribute('aria-label',running?.updating?'Cancel runner update':running?.runner_outdated?'Update runner':blocked?'Retry connection':running?(preparing?'Cancel connection':'Stop benchmark'):'Run GPU benchmark');$('run').disabled=(!connected&&!running)||busy||!!stopping||(hosted&&status?.usb_supported===false&&!running);$('run').setAttribute('aria-busy',String(busy||!!stopping));
   $('connection-cancel').hidden=!blocked;$('connection-cancel').disabled=busy||!!stopping;
   $('connection-cancel').textContent=preparing?'Cancel':'Stop';
-  const preparationOnly=hosted&&parent&&!hasNativeProgress(parent);
+  const preparationOnly=hosted&&parent&&(parent.updating||!hasNativeProgress(parent));
   const finishedMessage=hosted&&parent&&!hasNativeRun(parent)?`${run.status==='canceled'?'Connection canceled. ':''}No benchmark was started.`:`Benchmark ${run?.status}. Results are preserved below.`;
   const progress=run?(run.error||(terminal.has(run.status)?finishedMessage:run.message||(parent?parent.phases.map(p=>p.processor.toUpperCase()).join(' → ')+' · native execution':'Native benchmark running'))):'';
   $('run-status').textContent=progress;$('run-status').hidden=!progress;
@@ -307,7 +307,7 @@ async function runBenchmark(processor='gpu',cancel=false){
   }
   busy=true;mutation++;render();
   try{
-    if(hosted&&running?.runner_outdated&&!cancel){
+    if(hosted&&running?.runner_outdated&&!running?.updating&&!cancel){
       const created=await browserService.upgrade(running.session_id,crypto.randomUUID().replaceAll('-',''));
       selectedSession=created.session_id;selected=null;report=null;animateNext=true;
       status.benchmark_sessions=[created,...status.benchmark_sessions.filter(s=>s.session_id!==running.session_id&&s.session_id!==created.session_id)];

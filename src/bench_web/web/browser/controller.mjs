@@ -12,6 +12,8 @@ export class BrowserController {
     this.sessions = []; this.workers = new Map(); this.starting = false; this.disposed = false; this.deviceRows = new Map();
     this.resuming = new Map(); this.lastDevices = null;
     this.transportTask = Promise.resolve();
+    this.updates = new Map();
+    this.updateErrors = new Map();
     this.pageId = pageId;
     this.siteSha256 = siteSha256;
   }
@@ -72,10 +74,18 @@ export class BrowserController {
   }
   view(s) {
     const result = {...s}; delete result.serial; delete result.request_id; delete result.manifest;
+    result.updating = this.updates.has(s.session_id);
+    result.update_cancel_requested = this.updates.get(s.session_id)?.abort.signal.aborted || false;
     delete result.diagnostics; delete result.browser_events;
     delete result.installation_evidence;
     result.runner_outdated=!terminal.has(s.status)&&s.manifest.apk_sha256!==this.manifest.apk_sha256;
-    if(result.runner_outdated)result.message='A newer runner is available. Update runner stops the previous benchmark, keeps its results, and installs the current release.';
+    if(!result.updating&&this.updateErrors.has(s.session_id)){
+      result.message=this.updateErrors.get(s.session_id);
+      result.connection_error={code:'update_failed',message:result.message};
+      result.connection_state='blocked';
+      if(terminal.has(s.status))result.error=result.message;
+    }
+    if(result.runner_outdated&&!result.updating&&!result.connection_error)result.message='A newer runner is available. Update runner stops the previous benchmark, keeps its results, and installs the current release.';
     if (result.status === 'disconnected') result.message = connectionMessage({message: result.message});
     return structuredClone(result);
   }
@@ -96,7 +106,8 @@ export class BrowserController {
       const device = devices.find(d => d.serial === active.serial);
       // Older saved sessions have only a message. Honor their busy error too.
       const code = active.connection_error?.code || (active.status === 'disconnected' ? connectionError({message: active.message}).code : null);
-      const manual = ['usb_busy', 'permission_denied', 'approval_timeout', 'usb_timeout', 'credential_timeout', 'not_selected'].includes(code);
+      const manual = ['usb_busy', 'permission_denied', 'approval_timeout', 'usb_timeout', 'credential_timeout', 'not_selected'].includes(code)
+        || (code === 'connection_failed' && !active.phases.some(p => p.attempted));
       if (device && (!manual || reconnected.has(active.serial))) {
         try {await this.resume(active, device);} catch (e) {active.message = connectionMessage(e); active.connection_state = 'blocked';}
       }
@@ -147,22 +158,58 @@ export class BrowserController {
     if(!old||terminal.has(old.status))throw Error('No previous runner connection to update.');
     if(this.starting||this.workers.has(id)||this.resuming.has(id))throw Error('Wait for the current device connection before updating.');
     this.starting=true;
+    const update={abort:new AbortController(),task:null};
+    this.updates.set(id,update);
+    this.updateErrors.delete(id);
+    old.message='Connecting to update the headset runner…';
+    old.connection_state='connecting';delete old.connection_error;
+    // Invoke choose in the click's activation, then return so polling and Cancel stay live.
+    let chosen;
+    try {chosen=this.transport.choose(old.serial);} catch(error) {chosen=Promise.reject(error);}
+    update.task=(async()=>{
+      let device;
+      try {device=await this.upgradeRunner(old,chosen,update.abort.signal);}
+      catch(error){
+        if(!this.disposed){
+          // Failure can occur without owning the device lock. Never persist this
+          // tab's stale session over progress or reports saved by another tab.
+          const latest=(await this.store.sessions()).find(s=>s.session_id===id);
+          if(latest)Object.assign(old,latest);
+          if(!terminal.has(old.status)){
+            old.message=update.abort.signal.aborted?'Runner update canceled. Previous results are preserved. Select Update runner to try again.':connectionMessage(error);
+            this.updateErrors.set(id,old.message);
+          }
+        }
+      }finally{this.updates.delete(id);this.starting=false;}
+      if(device&&!this.disposed&&!update.abort.signal.aborted)await this.start(device.serial,requestId,'gpu',device);
+    })();
+    update.task=update.task.catch(error=>{
+      if(!this.disposed)this.updateErrors.set(id,'The previous runner was preserved, but the new run could not start. '+connectionMessage(error)+' Press Run to try again.');
+    });
+    return this.view(old);
+  }
+  async upgradeRunner(old,chosen,signal){
     let device,release;
     try{
-      // Keep permission selection in the user's Update runner click.
-      const chosen=this.transport.choose(old.serial);await this.init();device=await chosen;
+      device=await chosen;signal.throwIfAborted();await this.init();
       validateManifest(old.manifest);
       if(device.serial!==old.serial)throw Error('Reconnect the headset with the previous run before updating its runner.');
       release=await this.lock(old.serial);
+      const latest=(await this.store.sessions()).find(s=>s.session_id===old.session_id);
+      if(!latest||terminal.has(latest.status))throw Error('The previous session has already finished. Press Run to start a benchmark.');
+      Object.assign(old,latest);
       await this.#useTransport(async () => {
         try {
           if (this.disposed) throw new DOMException('Connection closed', 'AbortError');
-          await this.transport.connect(device);
-          const installed=await this.transport.installedHash(old.manifest);
+          signal.throwIfAborted();
+          old.connection_state='connecting';delete old.connection_error;
+          await this.transport.connect(device,signal,text=>{old.message=text;});
+          old.message='Checking the previous runner and preserving its reports…';
+          const installed=await this.transport.installedHash(old.manifest,signal);
           this.event(old,'update_requested',undefined,{next_apk_sha256:this.manifest.apk_sha256});
           const capture=async phase=>{
             try{
-              const native=await this.transport.read(old.manifest,phase.run_id,'report.json');
+              const native=await this.transport.read(old.manifest,phase.run_id,'report.json',signal);
               validateReport(native,phase.configuration,old.manifest.catalog,{partial:true});
               await this.store.saveReport(phase.run_id,{native,report:summarize(native)});
               phase.run??={run_id:phase.run_id,configuration:structuredClone(phase.configuration),storage:'browser'};
@@ -175,11 +222,12 @@ export class BrowserController {
             // This package is a validated xrBench helper, never an arbitrary app.
             // Stop its GPU work before the next release can benchmark; retain all files.
             if(old.phases.some(p=>p.attempted&&!terminal.has(p.status))){
-              for(const phase of old.phases)if(phase.attempted&&!terminal.has(phase.status))await this.transport.stop(old.manifest,phase.run_id);
-              await this.transport.shell(['am','force-stop',old.manifest.package]);
+              for(const phase of old.phases)if(phase.attempted&&!terminal.has(phase.status))await this.transport.stop(old.manifest,phase.run_id,signal);
+              await this.transport.shell(['am','force-stop',old.manifest.package],{signal});
               for(const phase of old.phases)if(phase.attempted)await capture(phase);
             }
           }
+          signal.throwIfAborted();
           old.error='Previous runner retired for an update. Existing reports and application data are preserved.';
           await this.finish(old,'canceled');
           this.event(old,'retired_for_update',undefined,{next_apk_sha256:this.manifest.apk_sha256});
@@ -187,9 +235,9 @@ export class BrowserController {
         } finally {await this.transport.close();}
       });
     }finally{
-      release?.();this.starting=false;
+      release?.();
     }
-    return this.start(device.serial,requestId,'gpu',device);
+    return device;
   }
   async resume(s, device) {
     if (this.workers.has(s.session_id)) return;
@@ -247,8 +295,8 @@ export class BrowserController {
         s.identity = identity; await this.save(s);
         const captureInstallation = async () => {
           if (!this.transport.installationSnapshot) return;
-          try {(s.installation_evidence ||= []).push(await this.transport.installationSnapshot(s.manifest));}
-          catch(error) {(s.installation_evidence ||= []).push({error:error.message,captured_at:new Date().toISOString()});}
+          try {(s.installation_evidence ||= []).push(await this.transport.installationSnapshot(s.manifest,signal));}
+          catch(error) {signal.throwIfAborted();(s.installation_evidence ||= []).push({error:error.message,captured_at:new Date().toISOString()});}
         };
         await captureInstallation();
         await this.transport.install(s.manifest, this.manifestUrl, signal, text => {s.message = text;});
@@ -392,6 +440,8 @@ export class BrowserController {
   async stop(id) {
     let s = this.sessions.find(s => s.session_id === id), release;
     if (!s) throw Error('Session not found');
+    const update=this.updates.get(id);
+    if(update){update.abort.abort(new DOMException('Runner update canceled','AbortError'));s.message='Canceling runner update…';return this.view(s);}
     if (terminal.has(s.status)) return this.view(s);
     if (!this.workers.has(id)) {
       // Never overwrite a live owner's state with a stale snapshot from another tab.
@@ -431,5 +481,5 @@ export class BrowserController {
       exported_at: new Date().toISOString(), origin: globalThis.location?.origin || null,
       user_agent: globalThis.navigator?.userAgent || null}};
   }
-  dispose() {this.disposed = true; this.delivery?.dispose(); for (const w of this.workers.values()) w.abort.abort(); void this.transport.close();}
+  dispose() {this.disposed = true; this.delivery?.dispose(); for (const u of this.updates.values()) u.abort.abort(); for (const w of this.workers.values()) w.abort.abort(); void this.transport.close();}
 }
