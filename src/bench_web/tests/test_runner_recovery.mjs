@@ -7,7 +7,7 @@ import {EvidenceError} from '../web/browser/evidence.mjs';
 import {MemoryStore} from './browser-fixtures.mjs';
 import {nativeManifest} from './native-fixtures.mjs';
 
-function deferred(){let resolve;const promise=new Promise(r=>{resolve=r;});return {promise,resolve};}
+function deferred(){let resolve,reject;const promise=new Promise((r,j)=>{resolve=r;reject=j;});return {promise,resolve,reject};}
 async function fixture(){
   const manifest=nativeManifest(),store=new MemoryStore(),device={serial:'fixture'};
   const old=structuredClone(manifest);old.apk_sha256='f'.repeat(64);old.apk=old.apk_sha256+'.apk';old.configurations.gpu.apk_sha256=old.apk_sha256;
@@ -47,13 +47,33 @@ test('runner update returns immediately, exposes progress, and can cancel pendin
   }finally{await f.close();}
 });
 
-test('canceling an update while the chooser is open never connects after late selection',async()=>{
+for(const late of ['selection','rejection'])test(`canceling an update releases a pending chooser before late ${late}`,async()=>{
   const f=await fixture(),chosen=deferred();f.transport.choose=()=>chosen.promise;
   try{
     await f.controller.upgrade(f.session.session_id);const task=f.controller.updates.get(f.session.session_id).task;
-    await f.controller.stop(f.session.session_id);chosen.resolve(f.device);await task;
+    await f.controller.stop(f.session.session_id);await nextTurn();
+    assert.equal(f.controller.starting,false,'Cancel must not wait for the native chooser');
+    assert.equal(f.controller.view(f.session).updating,false);
+    assert.equal(f.session.cancel_requested,false);
+    assert.match(f.controller.view(f.session).message,/update canceled/);
+    await task;
+    if(late==='selection')chosen.resolve(f.device);else chosen.reject(new DOMException('Chooser dismissed','NotFoundError'));
+    await nextTurn();
     assert.deepEqual(f.calls,[]);assert.equal(f.held,false);assert.equal(f.store.items.length,1);
   }finally{chosen.resolve(f.device);await f.close();}
+});
+
+test('an updated runner that fails immediately retains its previous session identity',async()=>{
+  const f=await fixture();
+  try{
+    const response=await f.controller.upgrade(f.session.session_id);
+    await f.controller.updates.get(f.session.session_id).task;
+    await Promise.all([...f.controller.workers.values()].map(w=>w.task));
+    const replacement=(await f.controller.snapshot()).benchmark_sessions.find(s=>s.session_id!==response.session_id);
+    assert.equal(replacement.status,'failed');assert.equal(replacement.error,'Native probe rejected');
+    assert.equal(replacement.replaces_session_id,response.session_id);
+    assert.equal((await f.store.sessions()).find(s=>s.session_id===replacement.session_id).replaces_session_id,response.session_id);
+  }finally{await f.close();}
 });
 
 test('failed update never overwrites another tab\'s completed evidence or live progress',async()=>{

@@ -1,6 +1,6 @@
 import {terminal, identify, validateManifest, validateReport, validateProgress, summarize, sha256, EvidenceError} from './evidence.mjs';
 import {acquireDeviceLock} from './store.mjs';
-import {MissingFile, connectionError, connectionMessage} from './transport.mjs';
+import {MissingFile, abortable, connectionError, connectionMessage} from './transport.mjs';
 import {CPU_RESTRICTION} from '../processor-policy.mjs';
 
 const uuid = prefix => prefix + crypto.randomUUID().replaceAll('-', '');
@@ -33,7 +33,7 @@ export class BrowserController {
       event_id: uuid('event-'), page_id: this.pageId, site_sha256: this.siteSha256, ...details});
   }
   active() {return this.sessions.find(s => !terminal.has(s.status));}
-  async start(serial, requestId, processor = 'gpu', chosenDevice = null) {
+  async start(serial, requestId, processor = 'gpu', chosenDevice = null, replacesSessionId = null) {
     if (!['gpu', 'cpu'].includes(processor)) throw Error('Processor must be gpu or cpu');
     const explicitProcessor = arguments.length >= 3;
     const checkRequest = s => {
@@ -62,6 +62,7 @@ export class BrowserController {
           return this.view(duplicate);
         }
         const s = {session_id: uuid('bench-'), request_id: requestId || uuid('request-'), serial: device.serial,
+          ...(replacesSessionId ? {replaces_session_id: replacesSessionId} : {}),
           connection_id: (await sha256(new TextEncoder().encode(device.serial))).slice(0, 24),
           status: 'starting', created_at: now(), current_phase: 0, cancel_requested: false, processor, site_sha256: this.siteSha256,
           message: 'Connecting · approve USB debugging in the headset if prompted…', manifest: structuredClone(this.manifest),
@@ -181,7 +182,7 @@ export class BrowserController {
           }
         }
       }finally{this.updates.delete(id);this.starting=false;}
-      if(device&&!this.disposed&&!update.abort.signal.aborted)await this.start(device.serial,requestId,'gpu',device);
+      if(device&&!this.disposed&&!update.abort.signal.aborted)await this.start(device.serial,requestId,'gpu',device,id);
     })();
     update.task=update.task.catch(error=>{
       if(!this.disposed)this.updateErrors.set(id,'The previous runner was preserved, but the new run could not start. '+connectionMessage(error)+' Press Run to try again.');
@@ -191,7 +192,7 @@ export class BrowserController {
   async upgradeRunner(old,chosen,signal){
     let device,release;
     try{
-      device=await chosen;signal.throwIfAborted();await this.init();
+      device=await abortable(chosen,signal);signal.throwIfAborted();await this.init();
       validateManifest(old.manifest);
       if(device.serial!==old.serial)throw Error('Reconnect the headset with the previous run before updating its runner.');
       release=await this.lock(old.serial);

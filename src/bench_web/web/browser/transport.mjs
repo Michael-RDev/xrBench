@@ -22,7 +22,7 @@ function requireDeviceIdentity(device) {
 }
 // USB, IndexedDB, and Tango socket-open promises do not all observe AbortSignal.
 // Always consume their eventual result, but stop awaiting them at our deadline.
-function abortable(task, signal) {
+export function abortable(task, signal) {
   return new Promise((resolve, reject) => {
     const finish = callback => value => {signal.removeEventListener('abort', abort); callback(value);};
     const abort = () => finish(reject)(signal.reason);

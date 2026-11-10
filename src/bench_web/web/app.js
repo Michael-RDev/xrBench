@@ -13,6 +13,7 @@ const browserService=hosted?(await import('/bench/browser/entry.mjs')).createBro
 const $=id=>document.getElementById(id);
 let token='',status=null,selected=selectedRunId(),report=null,selectedSerial=null;
 let selectedSession=new URLSearchParams(location.search).get('session'),reports={},reportKeys={};
+let pendingUpdateSession=null;
 let refreshing=false,busy=false,connected=false,mutation=0,actionError='',serviceError='',catalog=null;
 let progressView=null,pendingRequest=null,animateNext=false,demoGeneration=0,presentationKey='';
 const dismissedPresentations=new Set();
@@ -54,7 +55,7 @@ function renderHistory(){
     const date=s.created_at?new Date(s.created_at*1000).toLocaleString():'Saved run';
     const processors=s.phases?s.phases.map(p=>p.processor.toUpperCase()).join(' + '):(s.configuration?.backend||'').includes('cpu')?'CPU':'GPU';
     button.textContent=`${date} · ${s.identity?.device_name||s.device_identity?.device_name||'Headset'} · ${processors} · ${s.status}`;
-    button.onclick=()=>{selectedSession=s.session_id||null;selected=s.phases?.[s.current_phase]?.run_id||s.run_id;report=null;mutation++;void poll();};
+    button.onclick=()=>{pendingUpdateSession=null;selectedSession=s.session_id||null;selected=s.phases?.[s.current_phase]?.run_id||s.run_id;report=null;mutation++;void poll();};
     item.append(button);return item;
   }));
 }
@@ -234,6 +235,11 @@ async function poll(){
       const matching=status.benchmark_sessions.find(s=>s.phases.some(p=>p.run_id===selected));
       if(matching)selectedSession=matching.session_id;
     }
+    if(pendingUpdateSession){
+      // A replacement may already be terminal by its first poll.
+      const replacement=status.benchmark_sessions?.find(s=>s.replaces_session_id===pendingUpdateSession);
+      if(replacement){selectedSession=replacement.session_id;selected=null;report=null;pendingUpdateSession=null;}
+    }
     if(activeSession())selectedSession=activeSession().session_id;
     else if(active()){selectedSession=null;selected=active().run_id;}
     const parent=session();
@@ -261,7 +267,7 @@ async function retry(){
   if(busy)return;token='';actionError='';
   if(hosted&&activeSession()){
     busy=true;mutation++;render();
-    try{await browserService.retry(activeSession().session_id);}catch(error){actionError=error.message;}
+    try{const resumed=await browserService.retry(activeSession().session_id);if(resumed?.updating)pendingUpdateSession=resumed.session_id;}catch(error){actionError=error.message;}
     finally{busy=false;}
   }
   await poll();render();
@@ -269,7 +275,7 @@ async function retry(){
 $('retry-status').onclick=retry;$('device-retry').onclick=retry;
 $('back-headset').onclick=()=>{
   if(demo&&demo.controller.snapshot.stage!=='closed')dismissedPresentations.add(presentationKey);
-  else{mutation++;selected=null;selectedSession=null;report=null;actionError='';}
+  else{mutation++;selected=null;selectedSession=null;pendingUpdateSession=null;report=null;actionError='';}
   render();$('run').focus({preventScroll:true});document.querySelector('.hero').scrollIntoView?.({block:'start',behavior:'auto'});
 };
 $('device-picker').onchange=()=>{selectedSerial=$('device-picker').value||null;pendingRequest=null;render();};
@@ -309,15 +315,19 @@ async function runBenchmark(processor='gpu',cancel=false){
   try{
     if(hosted&&running?.runner_outdated&&!running?.updating&&!cancel){
       const created=await browserService.upgrade(running.session_id,crypto.randomUUID().replaceAll('-',''));
-      selectedSession=created.session_id;selected=null;report=null;animateNext=true;
+      pendingUpdateSession=running.session_id;selectedSession=created.session_id;selected=null;report=null;animateNext=true;
       status.benchmark_sessions=[created,...status.benchmark_sessions.filter(s=>s.session_id!==running.session_id&&s.session_id!==created.session_id)];
     }
-    else if(running?.session_id){const stopped=await api('/api/benchmark-sessions/'+running.session_id+'/stop',{});status.benchmark_sessions=status.benchmark_sessions.map(s=>s.session_id===stopped.session_id?stopped:s);}
+    else if(running?.session_id){
+      const stopped=await api('/api/benchmark-sessions/'+running.session_id+'/stop',{});
+      if(stopped.update_cancel_requested)pendingUpdateSession=null;
+      status.benchmark_sessions=status.benchmark_sessions.map(s=>s.session_id===stopped.session_id?stopped:s);
+    }
     else if(running){const stopped=await api('/api/runs/'+running.run_id+'/stop',{});status.jobs=status.jobs.map(r=>r.run_id===stopped.run_id?stopped:r);}
     else{
       if(pendingRequest&&pendingRequest.processor!==processor)pendingRequest=null;
       pendingRequest ||= {serial:hosted?(selectedSerial||deviceView(status,'',selectedSerial).serial):device.serial,request_id:crypto.randomUUID().replaceAll('-',''),processor};
-      const created=await (hosted?browserService.start(pendingRequest.serial,pendingRequest.request_id,pendingRequest.processor):api('/api/benchmark-sessions',pendingRequest));animateNext=true;selectedSession=created.session_id;selected=created.phases?.[created.current_phase]?.run?.run_id||null;report=null;pendingRequest=null;
+      const created=await (hosted?browserService.start(pendingRequest.serial,pendingRequest.request_id,pendingRequest.processor):api('/api/benchmark-sessions',pendingRequest));animateNext=true;pendingUpdateSession=null;selectedSession=created.session_id;selected=created.phases?.[created.current_phase]?.run?.run_id||null;report=null;pendingRequest=null;
       if(created.phases?.[created.current_phase]?.run)status.jobs=[created.phases[created.current_phase].run,...status.jobs.filter(j=>j.run_id!==selected)];
       status.benchmark_sessions=[created,...(status.benchmark_sessions||[]).filter(s=>s.session_id!==created.session_id)];
     }
