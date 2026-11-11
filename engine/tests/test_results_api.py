@@ -94,7 +94,7 @@ def test_stored_report_hash_is_verified_before_export(store, report):
     store.put(report)
     with store.connect() as db:
         db.execute(
-            "UPDATE xrgpu_benchmarks.benchmark_runs SET report_sha256=%s WHERE run_id=%s",
+            "UPDATE xrgpu_benchmarks.benchmark_runs SET report_canonical=NULL, report_sha256=%s WHERE run_id=%s",
             ("0" * 64, report["run_id"]),
         )
     with pytest.raises(RuntimeError, match="integrity"):

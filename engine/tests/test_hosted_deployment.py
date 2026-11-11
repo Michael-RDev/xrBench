@@ -59,7 +59,7 @@ def test_read_only_audit_accepts_reviewed_package_and_preserves_state(hosted_db)
     before = hosted_db.scalar('SELECT row_to_json(upload_policy)::text FROM xrbench_private.upload_policy')
     result = hosted_deployment.audit(hosted_db.store, roles=hosted_db.roles)
     assert result['ready'], result['errors']
-    assert result['schema_versions'] == [1, 2, 3]
+    assert result['schema_versions'] == [1, 2, 3, 4]
     assert result['quota']['required_reservation_bytes'] == 33 * 1024 * 1024
     assert result['physical_database_bytes'] > 0
     assert result['physical_storage_headroom_verified'] is False

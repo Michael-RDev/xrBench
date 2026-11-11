@@ -150,7 +150,7 @@ def audit(store, *, roles=None):
             versions = [row[0] for row in connection.execute(
                 'SELECT version FROM xrgpu_benchmarks.schema_migrations ORDER BY version')]
             result['schema_versions'] = versions
-        check('core_schema_versions', result['schema_versions'] == [1, 2, 3],
+        check('core_schema_versions', result['schema_versions'] == [1, 2, 3, 4],
               'The xrBench core schema versions do not match this release.')
 
         function_rows = connection.execute("""SELECT p.oid,p.proname,pg_catalog.oidvectortypes(p.proargtypes),

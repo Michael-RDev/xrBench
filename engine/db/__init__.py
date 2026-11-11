@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from engine.reports import digest, validate
+from engine.reports import canonical, digest, validate
 from engine.db.security import DatabaseConnectionError, connection_options
 
 
@@ -56,6 +56,7 @@ class Store:
     def put(self, report):
         validate(report)
         sha = digest(report)
+        payload = canonical(report).decode("utf-8")
         config = report["configuration"]
         with self.connect() as db:
             db.execute("SET LOCAL search_path TO xrgpu_benchmarks")
@@ -63,13 +64,13 @@ class Store:
             db.execute("SET LOCAL statement_timeout = '25s'")
             inserted = db.execute("""INSERT INTO benchmark_runs
                 (run_id,schema_version,suite_revision,runtime_revision,backend,mode,preset,status,
-                 started_at,finished_at,device,configuration,report,report_sha256)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb,%s)
+                 started_at,finished_at,device,configuration,report,report_sha256,report_canonical)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb,%s,%s)
                 ON CONFLICT (run_id) DO NOTHING RETURNING run_id""",
                 (report["run_id"], report["schema_version"], report["suite_revision"], report["runtime_revision"],
                  report["backend"], config["mode"], config["preset"], report["status"],
                  report["started_at"], report["finished_at"], json.dumps(report["device"]),
-                 json.dumps(config), json.dumps(report, allow_nan=False), sha)).fetchone()
+                 json.dumps(config), payload, sha, payload)).fetchone()
             if not inserted:
                 previous = db.execute("SELECT report_sha256 FROM benchmark_runs WHERE run_id=%s", (report["run_id"],)).fetchone()[0]
                 if previous != sha:
@@ -87,15 +88,17 @@ class Store:
 
     def get(self, run_id):
         with self.connect() as db:
-            row = db.execute("SELECT report FROM xrgpu_benchmarks.benchmark_runs WHERE run_id=%s", (run_id,)).fetchone()
-            return row[0] if row else None
+            row = db.execute("SELECT report, report_canonical FROM xrgpu_benchmarks.benchmark_runs WHERE run_id=%s", (run_id,)).fetchone()
+            return (json.loads(row[1]) if row[1] is not None else row[0]) if row else None
 
     def result(self, run_id):
         with self.connect() as db:
-            row = db.execute("SELECT report, report_sha256 FROM xrgpu_benchmarks.benchmark_runs WHERE run_id=%s", (run_id,)).fetchone()
+            row = db.execute("SELECT report, report_sha256, report_canonical FROM xrgpu_benchmarks.benchmark_runs WHERE run_id=%s", (run_id,)).fetchone()
         if row is None:
             return None
-        report, sha = row
+        report, sha, payload = row
+        if payload is not None:
+            report = json.loads(payload)
         if report.get("run_id") != run_id or digest(report) != sha:
             raise RuntimeError("Stored report integrity check failed")
         return dict(report=report, receipt=dict(stored=True, run_id=run_id, sha256=sha))

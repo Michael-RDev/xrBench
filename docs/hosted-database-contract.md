@@ -5,7 +5,7 @@ existing shared MichaelPortfolio Supabase project, with xrBench isolated in its
 own namespaces. Applying these files is an explicit deployment step; development
 tests never apply them to the hosted project.
 
-`20261027000100_xrbench_core.sql` bootstraps the current three engine schema
+`20261027000100_xrbench_core.sql` bootstraps the current four engine schema
 versions inside `xrgpu_benchmarks`. `20261027000200_xrbench_hosted_uploads.sql`
 adds `xrbench_private` quota/ownership tables and the two named public RPCs below.
 The package does not alter portfolio tables, Auth configuration, existing roles,

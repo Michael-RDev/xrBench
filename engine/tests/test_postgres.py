@@ -5,7 +5,7 @@ import uuid
 import pytest
 
 from engine.db import SchemaNotReady, Store, migration_files
-from engine.reports import summarize
+from engine.reports import canonical, digest, summarize
 
 
 @pytest.fixture
@@ -51,7 +51,25 @@ def test_operator_sql_files_initialize_upgrade_and_repeat_without_losing_reports
         db.execute(first.read_text())
     with pytest.raises(SchemaNotReady):
         store.health()
-    receipt = store.put(summarize(report))
+    # Seed using the v1 storage contract; the current writer requires migration 004.
+    legacy = summarize(report)
+    receipt = dict(stored=True, run_id=legacy["run_id"], sha256=digest(legacy))
+    with store.connect() as db:
+        db.execute("""INSERT INTO xrgpu_benchmarks.benchmark_runs
+            (run_id,schema_version,suite_revision,runtime_revision,backend,mode,preset,status,
+             started_at,finished_at,device,configuration,report,report_sha256)
+            SELECT j->>'run_id',(j->>'schema_version')::integer,j->>'suite_revision',
+                j->>'runtime_revision',j->>'backend',j->'configuration'->>'mode',
+                j->'configuration'->>'preset',j->>'status',(j->>'started_at')::timestamptz,
+                (j->>'finished_at')::timestamptz,j->'device',j->'configuration',j,%s
+            FROM (SELECT %s::jsonb AS j) source""",
+            (receipt["sha256"], canonical(legacy).decode("utf-8")))
+        db.execute("""INSERT INTO xrgpu_benchmarks.benchmark_results
+            (run_id,case_id,phase,trial,operation,status,correctness,timings,samples,result)
+            SELECT run_id,r->>'case',r->>'phase',(r->>'trial')::integer,r->>'operation',
+                r->>'status',r->'correctness',r->'timings',r->'samples',r
+            FROM xrgpu_benchmarks.benchmark_runs,
+                LATERAL jsonb_array_elements(report->'results') AS r""")
     with store.connect() as db:
         db.autocommit = True
         for path in remaining:

@@ -60,6 +60,20 @@ This role can read all reports and insert new ones. If multiple users need
 isolated report access, implement authorization and row-level policies in the
 hosted service before exposing reads.
 
+Migration 004 adds nullable `benchmark_runs.report_canonical`. New Python
+ingestion stores the exact canonical JSON used for `report_sha256`, preserving
+exponent notation and signed zero that JSONB cannot retain. The database checks
+both its hash and its equivalence to the JSONB report. Runtime roles retain
+SELECT/INSERT access; no UPDATE grant is needed.
+
+Existing rows keep their original checksums. If JSONB has discarded information
+needed to verify a legacy Python checksum, a database owner must restore
+`report_canonical` from the original report: compute `engine.reports.canonical`
+and check its SHA-256 against the existing `report_sha256` before updating only
+the null canonical column. The database constraint verifies that the restored
+payload matches both the stored hash and JSONB content. Neither migration nor
+the read-only pull guesses missing numbers or replaces checksums.
+
 ## Hosted receiver gate
 
 The Supabase schema/RPC, durable quotas and authenticated edge entrypoint are now

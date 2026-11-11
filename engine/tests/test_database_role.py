@@ -10,7 +10,7 @@ import pytest
 from engine.db import Store
 from engine.db.config import database
 from engine.db.security import connection_options
-from engine.reports import summarize
+from engine.reports import canonical, summarize
 
 
 def test_hosted_runtime_role_can_store_reports_but_cannot_mutate_schema_or_history(report):
@@ -72,14 +72,17 @@ def test_hosted_runtime_role_can_store_reports_but_cannot_mutate_schema_or_histo
             assert connection.execute("SELECT current_user, session_user").fetchone() == (role_name, role_name)
         assert runtime.health()
         normalized = summarize(report)
+        normalized["device"].update(large_counter=1e20, negative_zero=-0.0)
         receipt = runtime.put(normalized)
         assert runtime.put(normalized) == receipt
-        assert runtime.get(report["run_id"]) == normalized
+        assert canonical(runtime.get(report["run_id"])) == canonical(normalized)
         assert runtime.result(report["run_id"])["receipt"] == receipt
+        assert canonical(runtime.result(report["run_id"])["report"]) == canonical(normalized)
         assert runtime.recent()[0]["run_id"] == report["run_id"]
 
         denied = [
             "UPDATE xrgpu_benchmarks.benchmark_runs SET status='failed'",
+            "UPDATE xrgpu_benchmarks.benchmark_runs SET report_canonical=NULL",
             "DELETE FROM xrgpu_benchmarks.benchmark_runs",
             "UPDATE xrgpu_benchmarks.benchmark_results SET status='failed'",
             "DELETE FROM xrgpu_benchmarks.benchmark_results",
