@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {setImmediate as nextTurn} from 'node:timers/promises';
-import {AdbCommand, AdbAuthType, AdbDaemonTransport, AdbShellProtocolSubprocessService} from '@yume-chan/adb';
+import {AdbCommand, AdbAuthType, AdbDaemonTransport, AdbFeature, AdbShellProtocolSubprocessService} from '@yume-chan/adb';
 import {Consumable, ReadableStream, WritableStream} from '@yume-chan/stream-extra';
 import {WebUsbTransport} from '../web/browser/transport.mjs';
 
@@ -10,6 +10,75 @@ function deferred() {
   const promise = new Promise((yes, no) => {resolve = yes; reject = no;});
   return {promise, resolve, reject};
 }
+
+for (const failure of ['shell protocol', 'ADB construction']) test(`failed ${failure} closes raw USB even when authenticated cleanup rejects`, async context => {
+  let rawCloses = 0, authenticatedCloses = 0;
+  const raw = {opened: true, async close() {rawCloses++; raw.opened = false;}};
+  const authenticated = {
+    clientFeatures: [], banner: {features: []}, disconnected: new Promise(() => {}),
+    async close() {authenticatedCloses++; throw Error('Authenticated cleanup failed');},
+  };
+  if (failure === 'ADB construction') Object.defineProperty(authenticated, 'clientFeatures', {
+    get() {throw Error('ADB construction failed');},
+  });
+  context.mock.method(AdbDaemonTransport, 'authenticate', async () => authenticated);
+  const transport = new WebUsbTransport({credentials: {}});
+  await assert.rejects(transport.connect({serial: 'fixture', raw, connect: async () => ({})}),
+    error => error.code === 'connection_failed' && error.message.includes(failure));
+  await nextTurn();
+  assert.equal(authenticatedCloses, 1);
+  assert.equal(rawCloses, 1);
+  assert.equal(raw.opened, false);
+  assert.equal(transport.adb, null);
+  assert.equal(transport.device, null);
+});
+
+for (const stalled of ['authenticated', 'raw']) test(`failed setup retains USB ownership until ${stalled} cleanup settles`, async context => {
+  const cleanup = deferred();
+  let opens = 0, authenticatedCloses = 0, rawCloses = 0, outcome, supported = false;
+  const raw = {opened: false, async close() {
+    rawCloses++;
+    if (stalled === 'raw') await cleanup.promise;
+    raw.opened = false;
+  }};
+  const device = {serial: 'fixture', raw, async connect() {opens++; raw.opened = true; return {};}};
+  context.mock.method(AdbDaemonTransport, 'authenticate', async () => ({
+    clientFeatures: supported ? [AdbFeature.ShellV2] : [],
+    banner: {features: supported ? [AdbFeature.ShellV2] : []},
+    disconnected: new Promise(() => {}),
+    async close() {
+      authenticatedCloses++;
+      if (stalled === 'authenticated') await cleanup.promise;
+    },
+  }));
+  const transport = new WebUsbTransport({credentials: {}});
+  const competitor = new WebUsbTransport({credentials: {}});
+  const result = transport.connect(device).catch(error => {outcome = error;});
+  try {
+    await nextTurn();
+    assert.equal(outcome?.code, 'connection_failed', 'Failed setup must not wait for cleanup');
+    assert.match(outcome.message, /shell protocol/);
+    assert.equal(authenticatedCloses, 1);
+    assert.equal(rawCloses, 1);
+    await assert.rejects(transport.connect(device), error => error.code === 'usb_busy');
+    await assert.rejects(competitor.connect(device), error => error.code === 'usb_busy');
+    assert.equal(opens, 1, 'Neither instance may reopen USB while old cleanup can still close it');
+    cleanup.resolve();
+    await nextTurn();
+    assert.equal(raw.opened, false);
+    supported = true;
+    await transport.connect(device);
+    assert.equal(opens, 2, 'Retry must be allowed once all cleanup settles');
+    assert.ok(transport.adb);
+    assert.equal(transport.device, device);
+    assert.equal(raw.opened, true);
+  } finally {
+    cleanup.resolve();
+    await result;
+    await transport.close();
+    await competitor.close();
+  }
+});
 
 for (const stop of ['deadline', 'abort']) test(`stalled credentials release the real authenticator on ${stop}`, async context => {
   context.mock.timers.enable({apis: ['setTimeout']});

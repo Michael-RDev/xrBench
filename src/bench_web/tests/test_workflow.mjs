@@ -87,6 +87,12 @@ async function page(kind,report=null,stateOverrides={},options={}){
       return s;
     },
     exportSession:async()=>({reports:[report]}),dispose:()=>{},
+    upgrade:async sessionId=>{
+      calls.push({path:'/api/benchmark-sessions/'+sessionId+'/upgrade'});
+      const s=state.benchmark_sessions.find(s=>s.session_id===sessionId);
+      Object.assign(s,{updating:true,connection_state:'connecting',message:'Allow USB debugging inside the headset'});
+      return structuredClone(s);
+    },
     retryReport:async runId=>{calls.push({path:'/api/reports/'+runId+'/retry'});const row=state.report_delivery?.reports.find(r=>r.run_id===runId);if(row)row.status='pending';},
     retry:async sessionId=>{
       calls.push({path:'/api/benchmark-sessions/'+sessionId+'/retry'});
@@ -1051,5 +1057,55 @@ test('unsupported GPU reason and Retry stay inline with no CPU phase or navigati
     assert.equal(doc.querySelector('#advanced-cpu').hidden,true);
     doc.querySelector('#retry-status').click();await drain();
     assert.equal(p.calls.filter(c=>c.body).length,1);assert.equal(p.window.location.pathname,'/');
+  }finally{p.close();}
+});
+
+test('runner update keeps status polling and cancellation available',async()=>{
+  const old={session_id:benchId,status:'disconnected',runner_outdated:true,current_phase:0,created_at:1,
+    message:'A newer runner is available',phases:[{processor:'gpu',run_id:id,status:'pending'}]};
+  const p=await page('bench',null,{benchmark_sessions:[old],jobs:[]},{hosted:true,syncSession:false});
+  try{
+    const doc=p.window.document;
+    doc.getElementById('run').click();await drain();
+    assert.equal(doc.getElementById('run-label').textContent,'Cancel update');
+    assert.equal(doc.getElementById('run').disabled,false);
+    const polls=p.calls.filter(c=>c.path==='/api/status').length;
+    p.state.benchmark_sessions[0].message='Preserving the previous report';await p.tick();
+    assert.ok(p.calls.filter(c=>c.path==='/api/status').length>polls);
+    assert.match(doc.getElementById('run-status').textContent,/Preserving/);
+    doc.getElementById('run').click();await drain();
+    assert.equal(p.calls.filter(c=>c.path.endsWith('/stop')).length,1);
+    assert.equal(p.calls.filter(c=>c.path.endsWith('/upgrade')).length,1);
+  }finally{p.close();}
+});
+
+for(const [action,lateCancel] of [['run',false],['device-retry',false],['run',true]])test(`runner update through ${action} follows a fast failure${lateCancel?' after a late Cancel click':''} and preserves history selection`,async()=>{
+  const old={session_id:benchId,status:'disconnected',runner_outdated:true,current_phase:0,created_at:1,
+    message:'A newer runner is available',phases:[{processor:'gpu',run_id:id,status:'pending'}]};
+  const p=await page('bench',null,{benchmark_sessions:[old],jobs:[]},{hosted:true,syncSession:false});
+  if(action==='device-retry')p.window.__browserService.retry=sessionId=>p.window.__browserService.upgrade(sessionId);
+  try{
+    const doc=p.window.document;
+    doc.getElementById(action).click();await drain();
+    assert.equal(doc.getElementById('run-label').textContent,'Cancel update');
+    const retired=p.state.benchmark_sessions[0];
+    Object.assign(retired,{status:'canceled',updating:false,runner_outdated:false,
+      error:'Previous runner retired for an update. Existing reports and application data are preserved.'});
+    if(lateCancel){doc.getElementById('run').click();await drain();}
+    // Retirement and saving the replacement can straddle separate polls.
+    await p.tick();
+    const replacement={session_id:'bench-'+'c'.repeat(32),replaces_session_id:benchId,
+      status:'failed',current_phase:0,created_at:2,error:'Native probe rejected the updated runner',
+      phases:[{processor:'gpu',run_id:'run-'+'c'.repeat(32),status:'pending'}]};
+    p.state.benchmark_sessions=[replacement,retired];
+    for(let i=0;i<2;i++){
+      await p.tick();
+      assert.match(doc.getElementById('run-status').textContent,/Native probe rejected/);
+      assert.equal(new URL(p.window.location.href).searchParams.get('session'),replacement.session_id);
+    }
+    const previous=[...doc.querySelectorAll('#previous-runs-list button')].find(button=>button.textContent.includes('canceled'));
+    previous.click();await drain();await p.tick();
+    assert.equal(new URL(p.window.location.href).searchParams.get('session'),benchId);
+    assert.match(doc.getElementById('run-status').textContent,/Previous runner retired/);
   }finally{p.close();}
 });

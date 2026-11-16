@@ -7,9 +7,22 @@ const quote = value => "'" + String(value).replaceAll("'", "'\\''") + "'";
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const pendingUsb = new WeakMap();
 const quiet = action => {try {return Promise.resolve(action()).catch(() => {});} catch {return Promise.resolve();}};
+function retainUsb(raw, cleanup) {
+  const settled = Promise.all([pendingUsb.get(raw), cleanup]);
+  pendingUsb.set(raw, settled);
+  void settled.then(() => {if (pendingUsb.get(raw) === settled) pendingUsb.delete(raw);});
+  return settled;
+}
+function requireDeviceIdentity(device) {
+  // Tango substitutes vendor/product IDs when the USB serial is absent. Those
+  // identify a model, not a headset, and cannot safely recover a saved run.
+  if (!device.serial || (device instanceof AdbDaemonWebUsbDevice && !device.raw.serialNumber))
+    throw new EvidenceError('This headset has no stable USB identity and cannot be safely recovered.');
+  return device;
+}
 // USB, IndexedDB, and Tango socket-open promises do not all observe AbortSignal.
 // Always consume their eventual result, but stop awaiting them at our deadline.
-function abortable(task, signal) {
+export function abortable(task, signal) {
   return new Promise((resolve, reject) => {
     const finish = callback => value => {signal.removeEventListener('abort', abort); callback(value);};
     const abort = () => finish(reject)(signal.reason);
@@ -64,27 +77,47 @@ export class WebUsbTransport {
     if (!this.supported) return Promise.reject(Error('Use desktop Chrome or Edge on the HTTPS website to connect a headset.'));
     const known = this.devices.find(d => d.serial === serial) || (!serial && this.devices.length === 1 ? this.devices[0] : null);
     // Invoke the chooser before any await: WebUSB requires the Run click's activation.
-    return known ? Promise.resolve(known) : this.manager.requestDevice().then(device => {
+    return known ? Promise.resolve(known).then(requireDeviceIdentity) : this.manager.requestDevice().then(device => {
       if (!device) throw new DOMException('No headset selected', 'NotFoundError');
-      return device;
+      return requireDeviceIdentity(device);
     });
   }
   async connect(device, signal, message = () => {}) {
     signal?.throwIfAborted();
-    if (this.adb && this.device?.serial === device.serial) return;
-    await this.close();
-    signal?.throwIfAborted();
+    requireDeviceIdentity(device);
+    if (this.connecting) throw new ConnectionError('usb_busy',
+      'A headset connection is already in progress. Wait for it to finish or stop it before retrying.');
+    if (this.adb && this.device?.raw === device.raw) return;
+    // Reserve the instance before close() yields, so two requests cannot both
+    // authenticate and publish connections for different headsets.
+    const attempt = new AbortController();
+    this.connecting = attempt;
+    const cancel = () => attempt.abort(signal.reason);
+    signal?.addEventListener('abort', cancel, {once: true});
+    try {
+      await this.#connect(device, attempt, message);
+      attempt.signal.throwIfAborted();
+    } catch (error) {
+      if (this.connecting === attempt) {
+        const adb = this.adb;
+        this.adb = null; this.device = null;
+        if (adb) retainUsb(device.raw, quiet(() => adb.close()));
+      }
+      throw connectionError(error);
+    } finally {
+      signal?.removeEventListener('abort', cancel);
+      if (this.connecting === attempt) this.connecting = null;
+    }
+  }
+  async #connect(device, attempt, message) {
+    await this.#close(attempt);
+    attempt.signal.throwIfAborted();
     if (pendingUsb.has(device.raw)) throw new ConnectionError('usb_busy',
       'The previous USB connection is still closing. Reconnect the USB cable or reload this tab, then retry.');
     this.device = device;
-    const attempt = new AbortController();
-    this.connecting = attempt;
-    pendingUsb.set(device.raw, attempt);
-    const cancel = () => attempt.abort(signal.reason);
-    signal?.addEventListener('abort', cancel, {once: true});
     let stage = 'opening', closing;
     const closeRaw = () => closing ||= quiet(() => device.raw.close()).finally(() => {closing = null;});
-    attempt.signal.addEventListener('abort', () => {void closeRaw();}, {once: true});
+    attempt.signal.addEventListener('abort', () => {retainUsb(device.raw, closeRaw());}, {once: true});
     const progress = (next, text) => {attempt.signal.throwIfAborted(); stage = next; message(text);};
     const expire = () => {
       const detail = stage === 'approval'
@@ -97,7 +130,8 @@ export class WebUsbTransport {
       attempt.abort(new ConnectionError(...detail));
     };
     let timer = setTimeout(expire, 60000);
-    const opening = (async () => {
+    // Register the settlement promise before any callback can close this request.
+    const opening = Promise.resolve().then(async () => {
       progress('opening', 'Opening the headset USB interface…');
       const connection = await device.connect();
       attempt.signal.throwIfAborted();
@@ -140,50 +174,48 @@ export class WebUsbTransport {
       });
       const transport = await AdbDaemonTransport.authenticate({serial: device.serial, connection,
         credentialStore, authenticators});
-      if (attempt.signal.aborted) {
-        await quiet(() => transport.close());
+      try {
         attempt.signal.throwIfAborted();
+        const current = new Adb(transport);
+        if (!current.subprocess.shellProtocol) throw Error('This headset does not support the required Android shell protocol.');
+        this.adb = current;
+        current.disconnected.then(() => {if (this.adb === current) this.adb = null;}, () => {if (this.adb === current) this.adb = null;});
+      } catch (error) {
+        // Fail the caller and start raw USB cleanup immediately. This operation
+        // retains ownership while the authenticated transport finishes closing.
+        attempt.abort(error);
+        await quiet(() => transport.close());
+        throw error;
       }
-      return transport;
-    })();
+    });
     // Keep ownership until late opening/authentication and cleanup settle. A stale
     // attempt must never close a new connection to the same raw USBDevice.
-    void opening.then(async () => {
+    const settled = opening.then(async () => {
       if (attempt.signal.aborted) await closeRaw();
     }, async () => {
       if (device.raw.opened || closing) await closeRaw();
     }).finally(() => {
-      if (pendingUsb.get(device.raw) === attempt) pendingUsb.delete(device.raw);
+      if (pendingUsb.get(device.raw) === settled) pendingUsb.delete(device.raw);
     });
+    pendingUsb.set(device.raw, settled);
     try {
-      const transport = await abortable(opening, attempt.signal);
+      await abortable(opening, attempt.signal);
       attempt.signal.throwIfAborted();
-      this.adb = new Adb(transport);
-      const current = this.adb;
-      current.disconnected.then(() => {if (this.adb === current) this.adb = null;}, () => {if (this.adb === current) this.adb = null;});
-      if (!this.adb.subprocess.shellProtocol) throw Error('This headset does not support the required Android shell protocol.');
-    } catch (error) {
-      if (this.connecting === attempt) {
-        const adb = this.adb; this.adb = null; this.device = null;
-        if (adb) void quiet(() => adb.close());
-      }
-      throw connectionError(error);
-    }
-    finally {
-      clearTimeout(timer); signal?.removeEventListener('abort', cancel);
-      if (this.connecting === attempt) this.connecting = null;
-    }
+    } finally {clearTimeout(timer);}
   }
-  async close() {
+  async close() {await this.#close();}
+  async #close(keepAttempt) {
     const adb = this.adb, device = this.device, attempt = this.connecting;
-    this.adb = null; this.device = null; this.connecting = null;
-    attempt?.abort(new DOMException('Connection closed', 'AbortError'));
-    if (!adb && !device) return;
-    const cleanup = Promise.all([quiet(() => adb?.close()), quiet(() => device?.raw.opened && device.raw.close())]);
-    if (device && !pendingUsb.has(device.raw)) {
-      pendingUsb.set(device.raw, cleanup);
-      void cleanup.then(() => {if (pendingUsb.get(device.raw) === cleanup) pendingUsb.delete(device.raw);});
+    this.adb = null; this.device = null;
+    if (attempt !== keepAttempt) {
+      this.connecting = null;
+      attempt?.abort(new DOMException('Connection closed', 'AbortError'));
     }
+    if (!adb && !device) return;
+    // Join setup's existing ownership with every close operation. Setup may
+    // settle before authenticated cleanup, including immediately after connect().
+    let cleanup = Promise.all([quiet(() => adb?.close()), quiet(() => device?.raw.opened && device.raw.close())]);
+    if (device) cleanup = retainUsb(device.raw, cleanup);
     let timer;
     try {await Promise.race([cleanup, new Promise(resolve => {timer = setTimeout(resolve, 1000);})]);}
     finally {clearTimeout(timer);}
@@ -328,7 +360,7 @@ export class WebUsbTransport {
       } catch (e) {if (!(e instanceof MissingFile)) throw e;}
       await pause(250);
     }
-    throw Error('The native capability check did not respond. Reconnect USB and retry.');
+    throw new EvidenceError('The headset runner did not respond to its capability check. Another benchmark may still be running. Stop it from the headset\'s xrBench notification, then press Run again. Existing reports are preserved.');
   }
   async launch(manifest, config, signal) {
     if (!runPattern.test(config.run_id)) throw new EvidenceError('Invalid run identity');
@@ -372,20 +404,20 @@ export class WebUsbTransport {
     result.captured_at = new Date().toISOString();
     return result;
   }
-  async installationSnapshot(manifest) {
+  async installationSnapshot(manifest, signal) {
     const result = {kind: 'xrbench.installation-snapshot', package: manifest.package,
-      captured_at: new Date().toISOString(), apk_sha256: await this.installedHash(manifest)};
+      captured_at: new Date().toISOString(), apk_sha256: await this.installedHash(manifest, signal)};
     if (!result.apk_sha256) return {...result, installed: false};
     result.installed = true;
     result.connection_id = (await sha256(new TextEncoder().encode(this.device.serial))).slice(0, 24);
-    const dump = await this.shell(['dumpsys', 'package', manifest.package], {timeout: 5000, limit: 2 * 1024 ** 2});
+    const dump = await this.shell(['dumpsys', 'package', manifest.package], {signal, timeout: 5000, limit: 2 * 1024 ** 2});
     const version = /\bversionCode=(\d+)\b/.exec(dump.stdout);
     if (!version) throw Error('Cannot verify installed version');
     result.version_code = Number(version[1]); result.package_dump = dump.stdout;
-    const prefs = await this.shell(['run-as', manifest.package, 'cat', 'shared_prefs/device-profile.xml'], {allowFailure:true,limit:8192});
+    const prefs = await this.shell(['run-as', manifest.package, 'cat', 'shared_prefs/device-profile.xml'], {signal,allowFailure:true,limit:8192});
     result.installation_id = /<string name=["']id["']>([a-f0-9-]{36})<\/string>/.exec(prefs.stdout)?.[1] || null;
     const command = 'for file in files/runs/run-*/report.json; do if [ -f "$file" ]; then sha256sum "$file"; fi; done';
-    const reports = await this.shell(['run-as',manifest.package,'sh','-c',command], {limit:2 * 1024 ** 2});
+    const reports = await this.shell(['run-as',manifest.package,'sh','-c',command], {signal,limit:2 * 1024 ** 2});
     result.reports = reports.stdout.trim() ? reports.stdout.trim().split('\n').map(line => {
       const match = /^([a-f0-9]{64})\s+(files\/runs\/run-[a-f0-9]{32}\/report\.json)$/.exec(line);
       if (!match) throw Error('Invalid saved report inventory');
@@ -400,9 +432,9 @@ export class WebUsbTransport {
     if (result.code === 0 && /^\d+(?:\s+\d+)*$/.test(result.stdout.trim())) return true;
     throw Error('Could not check whether the headset runner is still running. Reconnect to recover this run.');
   }
-  async stop(manifest, id) {
+  async stop(manifest, id, signal) {
     if (!runPattern.test(id)) throw new EvidenceError('Invalid run identity');
     // Also preserve Stop when a disconnect happened before launch created its directory.
-    await this.shell(['run-as', manifest.package, 'sh', '-c', `mkdir -p files/runs/${id} && touch files/runs/${id}/cancel`]);
+    await this.shell(['run-as', manifest.package, 'sh', '-c', `mkdir -p files/runs/${id} && touch files/runs/${id}/cancel`], {signal});
   }
 }

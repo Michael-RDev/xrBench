@@ -23,7 +23,10 @@ test('a previous runner cannot block the next release and its checkpoint is pres
     const snapshot=await g.controller.snapshot();await g.step();
     assert.equal(snapshot.benchmark_sessions[0].runner_outdated,true);
     assert.equal(g.launches.length,0,'Loading a new website never replays the previous launch');
-    const current=await g.controller.upgrade(old.session_id,'new-release-request');
+    const updating=await g.controller.upgrade(old.session_id,'new-release-request');
+    assert.equal(updating.updating,true);
+    await g.controller.updates.get(old.session_id).task;
+    const current=g.controller.active();
     for(let i=0;i<3&&!g.launches.length;i++)await g.step();
     assert.deepEqual(commands,[['am','force-stop',old.manifest.package]]);
     assert.ok((await g.store.report(previousConfig.run_id)).native);
@@ -121,7 +124,7 @@ function fixture(options = {}) {
     install: async (m, url, signal, message) => {calls.push('install'); message('Installing'); await options.install?.(signal); signal.throwIfAborted();},
     installedHash: async () => m.apk_sha256,
     isRunning: async () => true,
-    probe: async () => {calls.push('probe'); return {profile_version: 1, backends: {executorch_cpu: {compatible: true}, executorch_vulkan: {compatible: !options.noGpu}}, ...options.capabilities};},
+    probe: async () => {calls.push('probe'); await options.probe?.(); return {profile_version: 1, backends: {executorch_cpu: {compatible: true}, executorch_vulkan: {compatible: !options.noGpu}}, ...options.capabilities};},
     launch: async (_, config) => {launches.push(structuredClone(config)); if (options.launchError) throw Error('USB dropped after launch');},
     read: async (_, id, filename) => {
       if (!connected) throw Error('disconnected');

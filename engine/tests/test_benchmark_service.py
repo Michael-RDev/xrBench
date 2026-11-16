@@ -14,17 +14,30 @@ def test_service_completion_failure_cancel_deadline_and_destruction(tmp_path):
     if not jar.exists() or not shutil.which("javac"):
         pytest.skip("JDK and repository JSON test jar required")
     sources = {
+        "android/app/Activity.java": """
+package android.app;import java.io.File;import android.content.Intent;import android.os.Bundle;import android.view.Window;
+public class Activity {
+ public Intent intent=new Intent();public boolean rejectForeground;public int launched,finished;
+ public void onCreate(Bundle b){}public Window getWindow(){return new Window();}public void setContentView(Object v){}
+ public Intent getIntent(){return intent;}public File getFilesDir(){return Service.root;}public void finish(){finished++;}
+ public void startActivity(Intent i){launched++;}
+ public void startForegroundService(Intent i){if(rejectForeground)throw new SecurityException("foreground denied");launched++;}
+}""",
+        "android/os/Bundle.java": "package android.os;public class Bundle {}",
+        "android/view/Window.java": "package android.view;public class Window {public void addFlags(int f){}}",
+        "android/view/WindowManager.java": "package android.view;public class WindowManager {public static class LayoutParams {public static final int FLAG_KEEP_SCREEN_ON=128;}}",
+        "android/widget/TextView.java": "package android.widget;public class TextView {public TextView(Object o){}public void setTextSize(int s){}public void setPadding(int a,int b,int c,int d){}public void setText(String s){}}",
         "android/app/Service.java": """
 package android.app;
 import java.io.File;import java.util.*;import android.content.Intent;import android.os.IBinder;
 public class Service {
  public static final int START_NOT_STICKY=2,STOP_FOREGROUND_REMOVE=1;
  public static File root;public static Map<Class<?>,Object> services=new HashMap<>();
- public int removed,stopped;
+ public int removed,stopped;public boolean rejectForeground;
  public <T>T getSystemService(Class<T> type){return type.cast(services.get(type));}
  public File getFilesDir(){return root;}public void onCreate(){}public void onDestroy(){}
  public int onStartCommand(Intent i,int f,int id){return 0;}public IBinder onBind(Intent i){return null;}
- public void startForeground(int id,Notification n,int type){}
+ public void startForeground(int id,Notification n,int type){if(rejectForeground)throw new SecurityException("foreground denied");}
  public void stopForeground(int flags){removed++;}public void stopSelf(){stopped++;}
  public void stopSelf(int id){stopped++;}
 }""",
@@ -78,6 +91,7 @@ package android.os;public class PowerManager {
 package org.xrgpu.benchmarks;
 import org.json.*;import java.io.*;import java.util.concurrent.*;import java.util.concurrent.atomic.*;import java.util.function.*;
 class BuildConfig {static final boolean PUBLIC_NATIVE=true;}
+class XrActivity {}
 class Checks {static void identity(String id){if(!id.matches("run-[0-9a-f]{32}"))throw new IllegalArgumentException();}}
 class Fileset {
  static ConcurrentHashMap<String,JSONObject> saved=new ConcurrentHashMap<>();
@@ -112,6 +126,31 @@ public class ServiceChecks {
   require(s.removed==1);require(event("wake_released")&&event("service_finished"));
   s.finish(1);require(s.removed==1);s.onDestroy();require(event("service_destroyed"));}
  public static void main(String[] args)throws Exception{
+  final String PROBE="probe-"+"2".repeat(32);
+  for(boolean busy:new boolean[]{true,false})for(boolean probe:new boolean[]{true,false}){
+   BenchmarkService s=service(new File(args[0],"startup"));
+   Runner.active.set(busy);s.rejectForeground=!busy;
+   Intent request=new Intent().putExtra(probe?"probe_id":"run_id",probe?PROBE:ID);
+   MainActivity a=new MainActivity();a.intent=request;a.rejectForeground=!busy;a.onCreate(null);
+   JSONObject error=Fileset.saved.get(probe?PROBE+".json":"startup-error.json");
+   require(error.getString("code").equals(busy?"native_busy":"native_start_failed"));
+   require(error.getString(probe?"probe_id":"run_id").equals(probe?PROBE:ID));
+   require(a.launched==0&&a.finished==1);
+   Fileset.saved.clear();s.onStartCommand(request,0,1);
+   error=Fileset.saved.get(probe?PROBE+".json":"startup-error.json");
+   require(error.getString("code").equals(busy?"native_busy":"native_start_failed"));
+   require(s.worker==null&&s.stopped==1);
+  }
+  Runner.active.set(false);
+  BenchmarkService active=service(new File(args[0],"active"));active.worker=new Thread();active.runId=ID;
+  active.onStartCommand(new Intent().putExtra("probe_id",PROBE),0,2);
+  require(Fileset.saved.get(PROBE+".json").getString("code").equals("native_busy"));
+  require(active.stopped==0&&!active.cancelled.get());
+  Fileset.saved.clear();active.onStartCommand(new Intent().putExtra("run_id",ID),0,3);
+  require(Fileset.saved.isEmpty());
+  StartupDiagnostic.write(Service.root,"../outside",null,"invalid","must not write");
+  StartupDiagnostic.write(Service.root,null,"../outside","invalid","must not write");
+  require(Fileset.saved.isEmpty());
   for(String mode:new String[]{"complete","failure","cancel","deadline","destroy"}){
    BenchmarkService s=service(new File(args[0],mode));
    CountDownLatch entered=new CountDownLatch(1),release=new CountDownLatch(1);
@@ -147,7 +186,9 @@ public class ServiceChecks {
         path.write_text(source)
         files.append(str(path))
     actual = ENGINE / "android/app/src/main/java/org/xrgpu/benchmarks/BenchmarkService.java"
-    build = subprocess.run(["javac", "-cp", str(jar), "-d", str(tmp_path), *files, str(actual)],
+    diagnostic = actual.with_name("StartupDiagnostic.java")
+    activity = actual.with_name("MainActivity.java")
+    build = subprocess.run(["javac", "-cp", str(jar), "-d", str(tmp_path), *files, str(actual), str(diagnostic), str(activity)],
                            capture_output=True, text=True)
     assert build.returncode == 0, build.stderr
     run = subprocess.run(["java", "-cp", os.pathsep.join((str(tmp_path), str(jar))),
