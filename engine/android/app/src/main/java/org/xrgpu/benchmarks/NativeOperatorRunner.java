@@ -43,27 +43,44 @@ final class NativeOperatorRunner {
             .put("soc_model",Build.VERSION.SDK_INT>=31?Build.SOC_MODEL:JSONObject.NULL)
             .put("soc_manufacturer",Build.VERSION.SDK_INT>=31?Build.SOC_MANUFACTURER:JSONObject.NULL);
     }
+    static File cacheChild(File parent,String name) throws IOException {
+        File file=new File(parent,name);
+        if(Files.isSymbolicLink(file.toPath()))throw new IOException("Native asset links are forbidden");
+        return file;
+    }
+    static File cacheDirectory(File parent,String name) throws IOException {
+        File directory=cacheChild(parent,name);
+        if(!directory.isDirectory()&&!directory.mkdir())throw new IOException("Cannot create native asset directory");
+        return directory;
+    }
     static File extract(Context context,JSONObject meta) throws Exception {
         byte[] bytes=asset(context,"native-operators/inventory.json");
         if(!sha(bytes).equals(meta.getString("assets_inventory_sha256")))throw new IOException("Native asset inventory checksum mismatch");
         JSONObject files=new JSONObject(new String(bytes,java.nio.charset.StandardCharsets.UTF_8)).getJSONObject("files");
-        File root=new File(context.getFilesDir(),"native-assets/"+meta.getString("assets_inventory_sha256"));
-        if(!root.exists()&&!root.mkdirs())throw new IOException("Cannot create native asset cache");
+        // Android's /data/user/0 is a system-owned alias. Resolve only the trusted
+        // Context directory, before adding any cache paths, so both native shader
+        // loaders receive a real path without hiding links inside our asset cache.
+        File filesDirectory=context.getFilesDir().toPath().toRealPath().toFile();
+        File root=cacheDirectory(cacheDirectory(filesDirectory,"native-assets"),meta.getString("assets_inventory_sha256"));
         for(java.util.Iterator<String> names=files.keys();names.hasNext();){String name=names.next();
             if(!name.matches("[A-Za-z0-9_./+-]+")||name.startsWith("/")||name.contains("//"))throw new IOException("Invalid native asset path");
             File file=root;
-            for(String part:name.split("/")){
+            for(String part:name.split("/",-1)){
                 if(part.equals(".")||part.equals("..")||part.isEmpty())throw new IOException("Native asset path escape");
-                file=new File(file,part);if(Files.isSymbolicLink(file.toPath()))throw new IOException("Native asset links are forbidden");
+                file=cacheChild(file,part);
             }
             String expected=files.getString(name);
-            if(file.isFile()&&sha(Files.readAllBytes(file.toPath())).equals(expected))continue;
+            if(file.isFile()&&file.length()<=64*1024*1024&&sha(Files.readAllBytes(file.toPath())).equals(expected))continue;
             byte[] data=asset(context,"native-operators/"+name);
             if(!sha(data).equals(expected))throw new IOException("Native asset checksum mismatch: "+name);
             if(!file.getParentFile().exists()&&!file.getParentFile().mkdirs())throw new IOException("Cannot create native asset directory");
-            File part=new File(file.getPath()+".part");
-            try(FileOutputStream stream=new FileOutputStream(part)){stream.write(data);stream.getFD().sync();}
-            Files.move(part.toPath(),file.toPath(),java.nio.file.StandardCopyOption.REPLACE_EXISTING,java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            // Never open a predictable .part path: a stale link could redirect
+            // writes outside the cache before the atomic replacement happens.
+            java.nio.file.Path part=Files.createTempFile(file.getParentFile().toPath(),".native-",".part");
+            try {
+                try(FileOutputStream stream=new FileOutputStream(part.toFile())){stream.write(data);stream.getFD().sync();}
+                Files.move(part,file.toPath(),java.nio.file.StandardCopyOption.REPLACE_EXISTING,java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } finally {Files.deleteIfExists(part);}
         }
         return root;
     }
